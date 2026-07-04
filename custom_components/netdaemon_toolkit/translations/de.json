@@ -1,0 +1,27 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "NetDaemon Toolkit",
+        "description": "Zu bearbeitender Ordner. Für die Log-Ansicht NetDaemons eigene Docker-Log-Datei read-only in Home Assistant mounten und den Mount-Zielpfad unten eintragen (siehe README) — alles andere funktioniert auch ohne.",
+        "data": {
+          "directory": "Zu bearbeitender Ordner",
+          "console_log": "Pfad zur Konsolen-Log-Datei (optional, für die Log-Ansicht)",
+          "webhook_relays": "Webhook-Relays (optional, eine Zeile pro Relay: webhook_id:event_type)"
+        }
+      },
+      "reconfigure": {
+        "title": "NetDaemon Toolkit",
+        "description": "Zu bearbeitender Ordner. Für die Log-Ansicht NetDaemons eigene Docker-Log-Datei read-only in Home Assistant mounten und den Mount-Zielpfad unten eintragen (siehe README) — alles andere funktioniert auch ohne.",
+        "data": {
+          "directory": "Zu bearbeitender Ordner",
+          "console_log": "Pfad zur Konsolen-Log-Datei (optional, für die Log-Ansicht)",
+          "webhook_relays": "Webhook-Relays (optional, eine Zeile pro Relay: webhook_id:event_type)"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "NetDaemon Toolkit ist bereits eingerichtet."
+    }
+  }
+}

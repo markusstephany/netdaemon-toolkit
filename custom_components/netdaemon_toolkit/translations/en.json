@@ -1,0 +1,27 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "NetDaemon Toolkit",
+        "description": "Folder to edit. For the log view, bind-mount NetDaemon's own Docker log file read-only into Home Assistant and enter that mount target below (see README) — everything else works without it.",
+        "data": {
+          "directory": "Directory to edit",
+          "console_log": "Console log file path (optional, for the log view)",
+          "webhook_relays": "Webhook relays (optional, one per line: webhook_id:event_type)"
+        }
+      },
+      "reconfigure": {
+        "title": "NetDaemon Toolkit",
+        "description": "Folder to edit. For the log view, bind-mount NetDaemon's own Docker log file read-only into Home Assistant and enter that mount target below (see README) — everything else works without it.",
+        "data": {
+          "directory": "Directory to edit",
+          "console_log": "Console log file path (optional, for the log view)",
+          "webhook_relays": "Webhook relays (optional, one per line: webhook_id:event_type)"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "NetDaemon Toolkit is already set up."
+    }
+  }
+}
