@@ -54,6 +54,16 @@ directory the first time it sets up (skipped if the files already exist):
 They're ordinary NetDaemon apps — safe to move or edit once installed, the
 integration only ever writes them if they're missing.
 
+**On a brand-new setup, none of this is running yet.** The integration
+writes these files to disk during `async_setup_entry`, but NetDaemon doesn't
+hot-reload — nothing picks them up until NetDaemon itself restarts. That
+first restart has to happen manually (however you normally restart
+NetDaemon), since the panel's own reload button works by asking `ControlApp`
+to do it, and `ControlApp` isn't running yet to hear that request. Every
+restart after that first one can go through the panel as normal. The
+integration detects this case (it just created a missing app) and raises a
+persistent notification in Home Assistant as a reminder.
+
 ## Log view setup
 
 The log view needs one read-only bind mount — nothing else, no Docker socket,

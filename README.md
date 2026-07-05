@@ -56,7 +56,8 @@ without opening an IDE.
    panel's own reload button won't do anything yet, since it works by
    asking `ControlApp` to restart NetDaemon, and `ControlApp` isn't running
    until after this restart. Every restart after this first one can go
-   through the panel.
+   through the panel. (Home Assistant will also show a persistent
+   notification as a reminder whenever this applies.)
 
 ## Configuration
 
