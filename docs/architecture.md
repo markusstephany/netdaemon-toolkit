@@ -51,8 +51,13 @@ directory the first time it sets up (skipped if the files already exist):
   `HomeAssistant__*` connection env vars), and writes the outcome to a
   result file the panel polls for.
 
-They're ordinary NetDaemon apps — safe to move or edit once installed, the
-integration only ever writes them if they're missing.
+They're ordinary NetDaemon apps, editable directly on disk like anything
+else in the apps folder. Inside the panel itself, `apps/_toolkit/` shows up
+in the tree (not hidden) but read-only — writes, renames, and deletes
+against anything in that folder are rejected by the WebSocket API, not just
+hidden behind a disabled button, so this holds even for a hand-crafted
+WebSocket call. The integration only ever writes these files if they're
+missing, so they're never overwritten across setups.
 
 **On a brand-new setup, none of this is running yet.** The integration
 writes these files to disk during `async_setup_entry`, but NetDaemon doesn't

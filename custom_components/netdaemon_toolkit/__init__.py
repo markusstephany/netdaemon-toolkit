@@ -144,7 +144,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         frontend_url_path=PANEL_URL,
         webcomponent_name=WEBCOMPONENT,
         # ?v= busts the frontend service-worker cache; bump when the JS changes.
-        module_url=f"{STATIC_URL}/netdaemon-toolkit.js?v=2",
+        module_url=f"{STATIC_URL}/netdaemon-toolkit.js?v=3",
         sidebar_title=PANEL_TITLE,
         sidebar_icon=PANEL_ICON,
         require_admin=True,

@@ -56,6 +56,7 @@ const I18N = {
     openFail: "Open failed: ", saveFail: "Save failed: ", loadFail: "Load failed: ",
     fallbackNote: "Highlighting failed to load — plain text field active.",
     genTooltip: "Auto-generated — overwritten on the next codegen.",
+    reservedTooltip: "Managed by NetDaemon Toolkit itself — read-only here.",
     appToggleTitle: "App enabled — click to toggle",
     t_traces: "Show decision traces", tracesTitle: "Decision traces",
     tracesEmpty: "No traces recorded yet.", traceNoSel: "Select a run on the left.",
@@ -120,6 +121,7 @@ const I18N = {
     openFail: "Öffnen fehlgeschlagen: ", saveFail: "Speichern fehlgeschlagen: ", loadFail: "Laden fehlgeschlagen: ",
     fallbackNote: "Highlighting nicht geladen — einfaches Textfeld aktiv.",
     genTooltip: "Automatisch generiert – wird beim nächsten Codegen überschrieben.",
+    reservedTooltip: "Wird von NetDaemon Toolkit selbst verwaltet — hier schreibgeschützt.",
     appToggleTitle: "App aktiv — zum Umschalten klicken",
     t_traces: "Entscheidungs-Traces anzeigen", tracesTitle: "Entscheidungs-Traces",
     tracesEmpty: "Noch keine Traces aufgezeichnet.", traceNoSel: "Links einen Lauf auswählen.",
@@ -218,6 +220,7 @@ class NetDaemonToolkitPanel extends HTMLElement {
     super();
     this._files = [];
     this._folders = [];
+    this._reserved = [];
     this._collapsed = new Set(); // folder paths that are collapsed (default: all open)
     this._filter = "";
     this._tabs = []; // open files: {path, doc/savedGen (CM) or content/savedContent (textarea)}
@@ -413,7 +416,11 @@ class NetDaemonToolkitPanel extends HTMLElement {
     if (!tab) return;
     this._active = path;
     this._showTab(tab);
-    this._saveBtn.disabled = false;
+    const reserved = this._isReserved(path);
+    if (this._cm) this._cm.setOption("readOnly", reserved);
+    else if (this._ta) this._ta.disabled = reserved;
+    this._saveBtn.disabled = reserved;
+    if (reserved) this._setInfo(this._t("reservedTooltip"));
     this._renderTabs();
     this._renderTree();
   }
@@ -517,6 +524,7 @@ class NetDaemonToolkitPanel extends HTMLElement {
       const res = await this._ws({ type: "netdaemon_toolkit/list" });
       this._files = res.files || [];
       this._folders = res.folders || [];
+      this._reserved = res.reserved || [];
       this._dir.textContent = res.directory || "";
       await this._loadTraceApps();
       this._renderTree();
@@ -712,6 +720,11 @@ class NetDaemonToolkitPanel extends HTMLElement {
   }
 
   // ── file tree ──────────────────────────────────────────────────────────
+
+  // Managed by the integration itself (e.g. apps/_toolkit) — read-only here.
+  _isReserved(path) {
+    return (this._reserved || []).some((r) => path === r || path.startsWith(r + "/"));
+  }
 
   _buildTree() {
     const root = { path: "", dirs: {}, files: [] };
@@ -933,9 +946,11 @@ class NetDaemonToolkitPanel extends HTMLElement {
       if (filtering && !this._dirHasMatch(dir)) continue;
       const open = filtering ? true : !this._collapsed.has(dir.path);
       const gen = isGenerated(dir.path);
+      const reserved = this._isReserved(dir.path);
       const head = document.createElement("button");
-      head.className = "folder" + (gen ? " generated" : "");
+      head.className = "folder" + (gen ? " generated" : "") + (reserved ? " reserved" : "");
       head.style.paddingLeft = 8 + depth * 14 + "px";
+      if (reserved) head.title = this._t("reservedTooltip");
       head.innerHTML =
         `<span class="chev">${open ? "▾" : "▸"}</span>` +
         svgIcon(open ? ICONS.folderOpen : ICONS.folder) +
@@ -946,25 +961,30 @@ class NetDaemonToolkitPanel extends HTMLElement {
         else this._collapsed.add(dir.path);
         this._renderTree();
       });
-      head.addEventListener("contextmenu", (ev) => {
-        ev.preventDefault();
-        this._showCtx(ev.clientX, ev.clientY, [
-          { label: this._t("ctxNewHere"), fn: () => this._promptCreate(dir.path) },
-          { label: this._t("ctxNewFolderHere"), fn: () => this._promptCreateFolder(dir.path) },
-          { label: this._t("ctxRenameFolder"), fn: () => this._promptRenameFolder(dir.path) },
-          { label: this._t("ctxDeleteFolder"), fn: () => this._deleteFolder(dir.path) },
-        ]);
-      });
+      if (!reserved) {
+        head.addEventListener("contextmenu", (ev) => {
+          ev.preventDefault();
+          this._showCtx(ev.clientX, ev.clientY, [
+            { label: this._t("ctxNewHere"), fn: () => this._promptCreate(dir.path) },
+            { label: this._t("ctxNewFolderHere"), fn: () => this._promptCreateFolder(dir.path) },
+            { label: this._t("ctxRenameFolder"), fn: () => this._promptRenameFolder(dir.path) },
+            { label: this._t("ctxDeleteFolder"), fn: () => this._deleteFolder(dir.path) },
+          ]);
+        });
+      }
       container.appendChild(head);
       if (open) this._renderNode(dir, depth + 1, container);
     }
     for (const file of node.files.sort((a, b) => a.name.localeCompare(b.name))) {
       if (!this._fileMatches(file.name)) continue;
       const gen = isGenerated(file.path);
+      const reserved = this._isReserved(file.path);
       const item = document.createElement("button");
       item.className =
-        "file" + (file.path === this._active ? " active" : "") + (gen ? " generated" : "");
+        "file" + (file.path === this._active ? " active" : "") +
+        (gen ? " generated" : "") + (reserved ? " reserved" : "");
       item.style.paddingLeft = 8 + depth * 14 + 16 + "px";
+      if (reserved) item.title = this._t("reservedTooltip");
       item.innerHTML = svgIcon(ICONS.file) + `<span class="lbl"></span>`;
       item.querySelector(".lbl").textContent = file.name;
       if (gen) {
@@ -1011,13 +1031,15 @@ class NetDaemonToolkitPanel extends HTMLElement {
         item.appendChild(tb);
       }
       item.addEventListener("click", () => this._open(file.path));
-      item.addEventListener("contextmenu", (ev) => {
-        ev.preventDefault();
-        this._showCtx(ev.clientX, ev.clientY, [
-          { label: this._t("ctxRename"), fn: () => this._promptRename(file.path) },
-          { label: this._t("ctxDelete"), fn: () => this._deleteFile(file.path) },
-        ]);
-      });
+      if (!reserved) {
+        item.addEventListener("contextmenu", (ev) => {
+          ev.preventDefault();
+          this._showCtx(ev.clientX, ev.clientY, [
+            { label: this._t("ctxRename"), fn: () => this._promptRename(file.path) },
+            { label: this._t("ctxDelete"), fn: () => this._deleteFile(file.path) },
+          ]);
+        });
+      }
       container.appendChild(item);
     }
   }
@@ -1365,6 +1387,8 @@ class NetDaemonToolkitPanel extends HTMLElement {
         .folder:hover, .file:hover { background:var(--secondary-background-color,#eee); }
         .generated { color:var(--warning-color,#e0a030); }
         .generated .ic { opacity:.8; }
+        .reserved { color:var(--warning-color,#e0a030); opacity:.7; }
+        .reserved .ic { opacity:.7; }
         .file.active { background:var(--primary-color); color:#fff; }
         .file.active .ic { opacity:.9; }
         .app-toggle { flex:none; width:30px; height:16px; border-radius:8px; margin-left:6px;

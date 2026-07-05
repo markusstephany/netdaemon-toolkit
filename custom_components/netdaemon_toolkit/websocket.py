@@ -24,6 +24,7 @@ from .const import (
     DEFAULT_CONSOLE_LOG,
     DEFAULT_DIRECTORY,
     DOMAIN,
+    TOOLKIT_APPS_REL,
 )
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -35,6 +36,28 @@ _TRACE_SLUG = re.compile(r"^[a-z0-9_]+$")
 def _lang(hass: HomeAssistant) -> str:
     """Match the frontend's own hass.language check (English fallback)."""
     return "de" if (hass.config.language or "en").startswith("de") else "en"
+
+
+def _is_reserved(rel: Path) -> bool:
+    """Only the toolkit's own managed folder (apps/_toolkit) is protected —
+    not every "_"-prefixed name, so a user's own such folders behave like
+    any other folder instead of silently disappearing."""
+    reserved = Path(TOOLKIT_APPS_REL)
+    return rel == reserved or reserved in rel.parents
+
+
+def _reject_if_reserved(hass, connection, msg, *paths: Path) -> bool:
+    """Send a "reserved" error and return True if any of the given
+    (already base-relative-safe) absolute paths falls inside apps/_toolkit —
+    that folder is managed by the integration itself and read-only here."""
+    base = _base_dir(hass)
+    for p in paths:
+        if _is_reserved(p.relative_to(base)):
+            connection.send_error(
+                msg["id"], "reserved", "managed by the integration; read-only in the panel"
+            )
+            return True
+    return False
 
 
 def _read_console_log(path: Path, tail: int) -> str:
@@ -92,11 +115,7 @@ def _list_files(base: Path) -> list[str]:
     for p in sorted(base.rglob("*")):
         if not p.is_file() or p.suffix not in ALLOWED_EXTENSIONS:
             continue
-        rel = p.relative_to(base)
-        # Hide anything inside an "_"-prefixed folder/file (e.g. _toolkit infra apps).
-        if any(part.startswith("_") for part in rel.parts):
-            continue
-        out.append(rel.as_posix())
+        out.append(p.relative_to(base).as_posix())
     return out
 
 
@@ -109,10 +128,7 @@ def _list_folders(base: Path) -> list[str]:
     for p in sorted(base.rglob("*")):
         if not p.is_dir():
             continue
-        rel = p.relative_to(base)
-        if any(part.startswith("_") for part in rel.parts):
-            continue
-        out.append(rel.as_posix())
+        out.append(p.relative_to(base).as_posix())
     return out
 
 
@@ -130,7 +146,14 @@ async def ws_list(hass, connection, msg):
     files = await hass.async_add_executor_job(_list_files, base)
     folders = await hass.async_add_executor_job(_list_folders, base)
     connection.send_result(
-        msg["id"], {"directory": str(base), "files": files, "folders": folders}
+        msg["id"],
+        {
+            "directory": str(base),
+            "files": files,
+            "folders": folders,
+            # Managed by this integration itself — shown read-only in the panel.
+            "reserved": [TOOLKIT_APPS_REL],
+        },
     )
 
 
@@ -171,6 +194,8 @@ async def ws_write(hass, connection, msg):
     except ValueError as err:
         connection.send_error(msg["id"], "invalid_path", str(err))
         return
+    if _reject_if_reserved(hass, connection, msg, path):
+        return
 
     def _write() -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -196,6 +221,8 @@ async def ws_create(hass, connection, msg):
         path = _safe_path(hass, msg["path"])
     except ValueError as err:
         connection.send_error(msg["id"], "invalid_path", str(err))
+        return
+    if _reject_if_reserved(hass, connection, msg, path):
         return
     if path.exists():
         connection.send_error(msg["id"], "exists", "file already exists")
@@ -225,6 +252,8 @@ async def ws_create_folder(hass, connection, msg):
     except ValueError as err:
         connection.send_error(msg["id"], "invalid_path", str(err))
         return
+    if _reject_if_reserved(hass, connection, msg, path):
+        return
     if path.exists():
         connection.send_error(msg["id"], "exists", "folder already exists")
         return
@@ -249,6 +278,8 @@ async def ws_rename(hass, connection, msg):
         dst = _safe_path(hass, msg["new_path"])
     except ValueError as err:
         connection.send_error(msg["id"], "invalid_path", str(err))
+        return
+    if _reject_if_reserved(hass, connection, msg, src, dst):
         return
     if not src.exists():
         connection.send_error(msg["id"], "not_found", "source does not exist")
@@ -281,6 +312,8 @@ async def ws_delete(hass, connection, msg):
     except ValueError as err:
         connection.send_error(msg["id"], "invalid_path", str(err))
         return
+    if _reject_if_reserved(hass, connection, msg, path):
+        return
     if not path.exists():
         connection.send_error(msg["id"], "not_found", "file does not exist")
         return
@@ -305,6 +338,8 @@ async def ws_rename_folder(hass, connection, msg):
         dst = _safe_dir(hass, msg["new_path"])
     except ValueError as err:
         connection.send_error(msg["id"], "invalid_path", str(err))
+        return
+    if _reject_if_reserved(hass, connection, msg, src, dst):
         return
     if not src.is_dir():
         connection.send_error(msg["id"], "not_found", "folder does not exist")
@@ -336,6 +371,8 @@ async def ws_delete_folder(hass, connection, msg):
         path = _safe_dir(hass, msg["path"])
     except ValueError as err:
         connection.send_error(msg["id"], "invalid_path", str(err))
+        return
+    if _reject_if_reserved(hass, connection, msg, path):
         return
     if not path.is_dir():
         connection.send_error(msg["id"], "not_found", "folder does not exist")
