@@ -32,6 +32,11 @@ _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 _TRACE_SLUG = re.compile(r"^[a-z0-9_]+$")
 
 
+def _lang(hass: HomeAssistant) -> str:
+    """Match the frontend's own hass.language check (English fallback)."""
+    return "de" if (hass.config.language or "en").startswith("de") else "en"
+
+
 def _read_console_log(path: Path, tail: int) -> str:
     """Read the last `tail` entries of Docker's own json-file container log.
 
@@ -355,21 +360,28 @@ async def ws_logs(hass, connection, msg):
     cfg = hass.data.get(DOMAIN, {}).get("config", {})
     console_log = cfg.get(CONF_CONSOLE_LOG, DEFAULT_CONSOLE_LOG)
     if not console_log:
+        no_log = {
+            "en": "No console log configured (see README: bind-mount NetDaemon's "
+            "Docker log file read-only and enter the mount target in the "
+            "integration).",
+            "de": "Kein Konsolen-Log konfiguriert (siehe README: NetDaemons "
+            "Docker-Log-Datei read-only mounten und den Mount-Zielpfad in der "
+            "Integration eintragen).",
+        }
         connection.send_result(
             msg["id"],
-            {
-                "available": False,
-                "reason": "Kein Konsolen-Log konfiguriert (siehe README: "
-                "NetDaemons Docker-Log-Datei read-only mounten und den "
-                "Mount-Zielpfad in der Integration eintragen).",
-            },
+            {"available": False, "reason": no_log[_lang(hass)]},
         )
         return
     path = Path(console_log)
     if not path.exists():
+        not_found = {
+            "en": f"File not found: {console_log}",
+            "de": f"Datei nicht gefunden: {console_log}",
+        }
         connection.send_result(
             msg["id"],
-            {"available": False, "reason": f"Datei nicht gefunden: {console_log}"},
+            {"available": False, "reason": not_found[_lang(hass)]},
         )
         return
     text = await hass.async_add_executor_job(_read_console_log, path, int(msg.get("tail", 200)))
@@ -414,9 +426,13 @@ async def ws_codegen(hass, connection, msg):
             return
         await asyncio.sleep(1)
 
+    timeout_reason = {
+        "en": "Timed out waiting for the codegen result.",
+        "de": "Zeitüberschreitung beim Warten auf das Codegen-Ergebnis.",
+    }
     connection.send_result(
         msg["id"],
-        {"success": False, "reason": "Zeitüberschreitung beim Warten auf das Codegen-Ergebnis."},
+        {"success": False, "reason": timeout_reason[_lang(hass)]},
     )
 
 

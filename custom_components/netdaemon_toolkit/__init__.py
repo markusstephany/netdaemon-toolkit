@@ -35,6 +35,36 @@ from .webhook_relay import async_register_webhook_relays, parse_relays
 
 _LOGGER = logging.getLogger(__name__)
 
+_FIRST_RESTART_NOTIFICATION = {
+    "en": {
+        "title": "NetDaemon Toolkit: restart NetDaemon once",
+        "message": (
+            "NetDaemon Toolkit just installed its reload/status/codegen apps "
+            "into `{directory}`. Restart NetDaemon yourself now (Docker, the "
+            "add-on, however you normally do it) — not from the panel, since "
+            "its reload button depends on these apps already running. Every "
+            "restart after this one can go through the panel."
+        ),
+    },
+    "de": {
+        "title": "NetDaemon Toolkit: NetDaemon einmal neu starten",
+        "message": (
+            "NetDaemon Toolkit hat gerade die Reload-/Status-/Codegen-Apps in "
+            "`{directory}` installiert. Starte NetDaemon jetzt selbst neu "
+            "(Docker, Add-on, wie auch immer du das sonst machst) — nicht "
+            "über das Panel, denn dessen Reload-Button setzt voraus, dass "
+            "diese Apps schon laufen. Jeder Neustart danach kann über das "
+            "Panel laufen."
+        ),
+    },
+}
+
+
+def _first_restart_notification_text(hass: HomeAssistant, directory: str) -> tuple[str, str]:
+    lang = "de" if (hass.config.language or "en").startswith("de") else "en"
+    strings = _FIRST_RESTART_NOTIFICATION[lang]
+    return strings["title"], strings["message"].format(directory=directory)
+
 
 async def _ensure_toolkit_apps(hass: HomeAssistant, directory: str) -> bool:
     """Write the bundled reload/status apps into the configured directory,
@@ -90,14 +120,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await _ensure_generated_placeholder(hass, directory)
 
     if first_install:
+        title, message = _first_restart_notification_text(hass, directory)
         persistent_notification.async_create(
             hass,
-            "NetDaemon Toolkit just installed its reload/status/codegen apps "
-            f"into `{directory}`. Restart NetDaemon yourself now (Docker, the "
-            "add-on, however you normally do it) — not from the panel, since "
-            "its reload button depends on these apps already running. Every "
-            "restart after this one can go through the panel.",
-            title="NetDaemon Toolkit: restart NetDaemon once",
+            message,
+            title=title,
             notification_id="netdaemon_toolkit_first_restart",
         )
 
