@@ -102,6 +102,9 @@ def _is_admin(connection) -> bool:
 @websocket_api.websocket_command({vol.Required("type"): "netdaemon_toolkit/list"})
 @websocket_api.async_response
 async def ws_list(hass, connection, msg):
+    if not _is_admin(connection):
+        connection.send_error(msg["id"], "unauthorized", "admin required")
+        return
     base = _base_dir(hass)
     files = await hass.async_add_executor_job(_list_files, base)
     connection.send_result(msg["id"], {"directory": str(base), "files": files})
@@ -112,6 +115,9 @@ async def ws_list(hass, connection, msg):
 )
 @websocket_api.async_response
 async def ws_read(hass, connection, msg):
+    if not _is_admin(connection):
+        connection.send_error(msg["id"], "unauthorized", "admin required")
+        return
     try:
         path = _safe_path(hass, msg["path"])
     except ValueError as err:

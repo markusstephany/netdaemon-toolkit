@@ -23,7 +23,7 @@ without opening an IDE.
   run as plain NetDaemon-side subprocesses/events (see below).
 - Optional webhook relay: forward one or more HA webhooks onto the event bus
   so NetDaemon apps can react to them without an `automations.yaml` shim.
-- Admin-only writes. No build step, no external dependencies.
+- Admin-only access throughout. No build step, no external dependencies.
 
 ## NetDaemon setup (source-deploy mode)
 
@@ -159,7 +159,9 @@ integration only ever writes them if they're missing.
 ## Security
 
 Access is restricted to the configured directory and to `.cs` files, paths are
-resolved and checked against escaping, and writes require an admin user.
+resolved and checked against escaping, and every WebSocket command (reads
+included) requires an admin user — matching the panel itself, which is
+`require_admin`-gated.
 
 No feature in this integration needs Docker socket or API access — reload and
 codegen are plain NetDaemon-side events/subprocesses, and the log view (if

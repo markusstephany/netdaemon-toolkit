@@ -15,10 +15,6 @@ DEFAULT_CONSOLE_LOG = ""
 # turned into a general-purpose file editor for the whole config tree.
 ALLOWED_EXTENSIONS = (".cs",)
 
-# Only these file types may be listed/read/written, so the panel can never be
-# turned into a general-purpose file editor for the whole config tree.
-ALLOWED_EXTENSIONS = (".cs",)
-
 # "Regenerate entities": ws_codegen fires CODEGEN_EVENT, a NetDaemon-side app
 # (CodegenApp) runs nd-codegen as a plain subprocess of itself (no Docker
 # access needed) and writes its outcome to CODEGEN_RESULT_REL, which ws_codegen
