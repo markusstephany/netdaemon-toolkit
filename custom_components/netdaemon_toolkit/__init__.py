@@ -9,7 +9,7 @@ import logging
 from datetime import timedelta
 from pathlib import Path
 
-from homeassistant.components import frontend, panel_custom
+from homeassistant.components import frontend, panel_custom, persistent_notification
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -36,14 +36,17 @@ from .webhook_relay import async_register_webhook_relays, parse_relays
 _LOGGER = logging.getLogger(__name__)
 
 
-async def _ensure_toolkit_apps(hass: HomeAssistant, directory: str) -> None:
+async def _ensure_toolkit_apps(hass: HomeAssistant, directory: str) -> bool:
     """Write the bundled reload/status apps into the configured directory,
     but only the ones missing — never touch files the user already has
-    (e.g. because they customized them)."""
+    (e.g. because they customized them). Returns True if any file was
+    actually created, i.e. this looks like a first-time setup for this
+    directory."""
     src_dir = Path(__file__).parent / "netdaemon_apps"
     dst_dir = Path(directory) / TOOLKIT_APPS_REL
 
-    def _do() -> None:
+    def _do() -> bool:
+        created = False
         for name in TOOLKIT_APPS_FILES:
             dst = dst_dir / name
             if dst.exists():
@@ -51,8 +54,10 @@ async def _ensure_toolkit_apps(hass: HomeAssistant, directory: str) -> None:
             dst_dir.mkdir(parents=True, exist_ok=True)
             dst.write_text((src_dir / name).read_text(encoding="utf-8"), encoding="utf-8")
             _LOGGER.info("Installed missing NetDaemon app %s into %s", name, dst_dir)
+            created = True
+        return created
 
-    await hass.async_add_executor_job(_do)
+    return await hass.async_add_executor_job(_do)
 
 
 async def _ensure_generated_placeholder(hass: HomeAssistant, directory: str) -> None:
@@ -81,8 +86,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     store["config"] = dict(entry.data)
 
     directory = entry.data.get(CONF_DIRECTORY, DEFAULT_DIRECTORY)
-    await _ensure_toolkit_apps(hass, directory)
+    first_install = await _ensure_toolkit_apps(hass, directory)
     await _ensure_generated_placeholder(hass, directory)
+
+    if first_install:
+        persistent_notification.async_create(
+            hass,
+            "NetDaemon Toolkit just installed its reload/status/codegen apps "
+            f"into `{directory}`. Restart NetDaemon yourself now (Docker, the "
+            "add-on, however you normally do it) — not from the panel, since "
+            "its reload button depends on these apps already running. Every "
+            "restart after this one can go through the panel.",
+            title="NetDaemon Toolkit: restart NetDaemon once",
+            notification_id="netdaemon_toolkit_first_restart",
+        )
 
     # Serve the frontend and register the WebSocket commands once per HA start.
     if not store.get("_registered"):

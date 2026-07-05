@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "NetDaemon Toolkit",
-        "description": "Folder to edit. For the log view, bind-mount NetDaemon's own Docker log file read-only into Home Assistant and enter that mount target below (see README) — everything else works without it.",
+        "description": "Folder to edit. For the log view, bind-mount NetDaemon's own Docker log file read-only into Home Assistant and enter that mount target below (see README) — everything else works without it.\n\n**After finishing this form:** if this is the first time NetDaemon Toolkit is set up against this folder, restart NetDaemon once yourself (Docker, the add-on, however you normally do it) — not from the panel. That first restart is what starts the reload/status/codegen apps this integration just installed; the panel's own reload button only works after that.",
         "data": {
           "directory": "Directory to edit",
           "console_log": "Console log file path (optional, for the log view)",
@@ -12,7 +12,7 @@
       },
       "reconfigure": {
         "title": "NetDaemon Toolkit",
-        "description": "Folder to edit. For the log view, bind-mount NetDaemon's own Docker log file read-only into Home Assistant and enter that mount target below (see README) — everything else works without it.",
+        "description": "Folder to edit. For the log view, bind-mount NetDaemon's own Docker log file read-only into Home Assistant and enter that mount target below (see README) — everything else works without it.\n\nIf you're pointing this at a new/different folder that has never run these apps before, restart NetDaemon once yourself after saving — see the note in the initial setup step.",
         "data": {
           "directory": "Directory to edit",
           "console_log": "Console log file path (optional, for the log view)",

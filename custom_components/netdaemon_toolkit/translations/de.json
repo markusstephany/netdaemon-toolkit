@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "NetDaemon Toolkit",
-        "description": "Zu bearbeitender Ordner. Für die Log-Ansicht NetDaemons eigene Docker-Log-Datei read-only in Home Assistant mounten und den Mount-Zielpfad unten eintragen (siehe README) — alles andere funktioniert auch ohne.",
+        "description": "Zu bearbeitender Ordner. Für die Log-Ansicht NetDaemons eigene Docker-Log-Datei read-only in Home Assistant mounten und den Mount-Zielpfad unten eintragen (siehe README) — alles andere funktioniert auch ohne.\n\n**Nach dem Absenden dieses Formulars:** Falls NetDaemon Toolkit hier zum ersten Mal für diesen Ordner eingerichtet wird, NetDaemon einmal selbst neu starten (Docker, Add-on, wie auch immer du das sonst machst) — nicht über das Panel. Erst dieser Neustart aktiviert die Reload-/Status-/Codegen-Apps, die diese Integration gerade installiert hat; der Reload-Button im Panel funktioniert erst danach.",
         "data": {
           "directory": "Zu bearbeitender Ordner",
           "console_log": "Pfad zur Konsolen-Log-Datei (optional, für die Log-Ansicht)",
@@ -12,7 +12,7 @@
       },
       "reconfigure": {
         "title": "NetDaemon Toolkit",
-        "description": "Zu bearbeitender Ordner. Für die Log-Ansicht NetDaemons eigene Docker-Log-Datei read-only in Home Assistant mounten und den Mount-Zielpfad unten eintragen (siehe README) — alles andere funktioniert auch ohne.",
+        "description": "Zu bearbeitender Ordner. Für die Log-Ansicht NetDaemons eigene Docker-Log-Datei read-only in Home Assistant mounten und den Mount-Zielpfad unten eintragen (siehe README) — alles andere funktioniert auch ohne.\n\nFalls hier ein neuer/anderer Ordner eingetragen wird, in dem diese Apps noch nie liefen, nach dem Speichern einmal NetDaemon selbst neu starten — siehe Hinweis im Ersteinrichtungs-Schritt.",
         "data": {
           "directory": "Zu bearbeitender Ordner",
           "console_log": "Pfad zur Konsolen-Log-Datei (optional, für die Log-Ansicht)",
