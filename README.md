@@ -47,11 +47,16 @@ without opening an IDE.
 3. Settings → Devices & Services → Add Integration → "NetDaemon Toolkit".
 4. Set the directory and, optionally, the console log path and any webhook
    relays (see Configuration below).
-5. Restart NetDaemon once. The integration writes `ControlApp.cs`,
-   `StatusApp.cs`, and `CodegenApp.cs` into `apps/_toolkit/` under your
-   configured directory on setup — but only the ones missing, so it never
-   overwrites files you've customized. That restart is what gets you the
-   reload button, the status/heartbeat display, and codegen in the panel.
+5. Restart NetDaemon once, **the normal way you already restart it** (Docker,
+   the add-on, however you manage it — not from inside the panel). The
+   integration writes `ControlApp.cs`, `StatusApp.cs`, and `CodegenApp.cs`
+   into `apps/_toolkit/` under your configured directory on setup — but only
+   the ones missing, so it never overwrites files you've customized. This
+   first restart is what gets these apps running in the first place; the
+   panel's own reload button won't do anything yet, since it works by
+   asking `ControlApp` to restart NetDaemon, and `ControlApp` isn't running
+   until after this restart. Every restart after this first one can go
+   through the panel.
 
 ## Configuration
 
