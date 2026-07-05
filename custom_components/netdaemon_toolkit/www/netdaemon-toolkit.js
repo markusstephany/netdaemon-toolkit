@@ -29,6 +29,7 @@ const I18N = {
     statusLoading: "NetDaemon …",
     save: "Save",
     btnNewFile: "＋ File", t_newFile: "Create a new file",
+    btnNewFolder: "＋ Folder", t_newFolder: "Create a new (empty) folder",
     t_refreshList: "Reload file list",
     filter: "Filter …",
     searchFind: "Search", searchReplace: "Replace",
@@ -66,14 +67,18 @@ const I18N = {
     traceClear: "Clear filters", traceNoMatches: "No traces match the filter.",
     promptNewRoot: "New file (path relative to root):",
     promptNewIn: "New file in {dir}/ :",
+    promptNewFolderRoot: "New folder (path relative to root):",
+    promptNewFolderIn: "New folder in {dir}/ :",
     promptRename: "Rename / move (path):",
     confirmDeleteFile: "Delete file?\n",
     promptRenameFolder: "Rename / move folder:",
     confirmDeleteFolder: "Delete folder and all files inside?\n",
     ctxNew: "New file…", ctxNewHere: "New file here…",
+    ctxNewFolder: "New folder…", ctxNewFolderHere: "New folder here…",
     ctxRename: "Rename…", ctxDelete: "Delete…",
     ctxRenameFolder: "Rename folder…", ctxDeleteFolder: "Delete folder…",
     createFail: "Create failed: ", renameFail: "Rename failed: ", deleteFail: "Delete failed: ",
+    createFolderFail: "Folder create failed: ",
     renameFolderFail: "Folder rename failed: ", deleteFolderFail: "Folder delete failed: ",
   },
   de: {
@@ -88,6 +93,7 @@ const I18N = {
     statusLoading: "NetDaemon …",
     save: "Speichern",
     btnNewFile: "＋ Datei", t_newFile: "Neue Datei anlegen",
+    btnNewFolder: "＋ Ordner", t_newFolder: "Neuen (leeren) Ordner anlegen",
     t_refreshList: "Dateiliste neu laden",
     filter: "Filter …",
     searchFind: "Suchen", searchReplace: "Ersetzen",
@@ -125,14 +131,18 @@ const I18N = {
     traceClear: "Filter zurücksetzen", traceNoMatches: "Keine Traces zum Filter gefunden.",
     promptNewRoot: "Neue Datei (Pfad relativ zur Wurzel):",
     promptNewIn: "Neue Datei in {dir}/ :",
+    promptNewFolderRoot: "Neuer Ordner (Pfad relativ zur Wurzel):",
+    promptNewFolderIn: "Neuer Ordner in {dir}/ :",
     promptRename: "Umbenennen / verschieben (Pfad):",
     confirmDeleteFile: "Datei löschen?\n",
     promptRenameFolder: "Ordner umbenennen / verschieben:",
     confirmDeleteFolder: "Ordner mit allen enthaltenen Dateien löschen?\n",
     ctxNew: "Neue Datei…", ctxNewHere: "Neue Datei hier…",
+    ctxNewFolder: "Neuer Ordner…", ctxNewFolderHere: "Neuer Ordner hier…",
     ctxRename: "Umbenennen…", ctxDelete: "Löschen…",
     ctxRenameFolder: "Ordner umbenennen…", ctxDeleteFolder: "Ordner löschen…",
     createFail: "Anlegen fehlgeschlagen: ", renameFail: "Umbenennen fehlgeschlagen: ", deleteFail: "Löschen fehlgeschlagen: ",
+    createFolderFail: "Ordner anlegen fehlgeschlagen: ",
     renameFolderFail: "Ordner umbenennen fehlgeschlagen: ", deleteFolderFail: "Ordner löschen fehlgeschlagen: ",
   },
 };
@@ -207,6 +217,7 @@ class NetDaemonToolkitPanel extends HTMLElement {
   constructor() {
     super();
     this._files = [];
+    this._folders = [];
     this._collapsed = new Set(); // folder paths that are collapsed (default: all open)
     this._filter = "";
     this._tabs = []; // open files: {path, doc/savedGen (CM) or content/savedContent (textarea)}
@@ -505,6 +516,7 @@ class NetDaemonToolkitPanel extends HTMLElement {
     try {
       const res = await this._ws({ type: "netdaemon_toolkit/list" });
       this._files = res.files || [];
+      this._folders = res.folders || [];
       this._dir.textContent = res.directory || "";
       await this._loadTraceApps();
       this._renderTree();
@@ -703,11 +715,10 @@ class NetDaemonToolkitPanel extends HTMLElement {
 
   _buildTree() {
     const root = { path: "", dirs: {}, files: [] };
-    for (const f of this._files) {
-      const parts = f.split("/");
+    const walkTo = (path) => {
+      const parts = path.split("/");
       let node = root;
-      for (let i = 0; i < parts.length - 1; i++) {
-        const name = parts[i];
+      for (const name of parts) {
         if (!node.dirs[name]) {
           node.dirs[name] = {
             path: (node.path ? node.path + "/" : "") + name,
@@ -717,8 +728,16 @@ class NetDaemonToolkitPanel extends HTMLElement {
         }
         node = node.dirs[name];
       }
+      return node;
+    };
+    for (const f of this._files) {
+      const parts = f.split("/");
+      const dir = parts.slice(0, -1).join("/");
+      const node = dir ? walkTo(dir) : root;
       node.files.push({ name: parts[parts.length - 1], path: f });
     }
+    // Folders with no .cs files yet wouldn't otherwise appear at all.
+    for (const d of this._folders) walkTo(d);
     return root;
   }
 
@@ -729,7 +748,7 @@ class NetDaemonToolkitPanel extends HTMLElement {
         )
       : [];
     this._list.innerHTML = "";
-    if (!this._files.length) {
+    if (!this._files.length && !this._folders.length) {
       this._listNote(this._t("noFiles"));
       return;
     }
@@ -795,6 +814,23 @@ class NetDaemonToolkitPanel extends HTMLElement {
       this._open(path);
     } catch (e) {
       this._setInfo(this._t("createFail") + (e.message || e), true);
+    }
+  }
+
+  async _promptCreateFolder(baseDir) {
+    let name = window.prompt(
+      baseDir ? this._t("promptNewFolderIn", { dir: baseDir }) : this._t("promptNewFolderRoot"),
+      ""
+    );
+    if (!name) return;
+    name = name.trim();
+    if (!name) return;
+    const path = baseDir ? baseDir + "/" + name : name;
+    try {
+      await this._ws({ type: "netdaemon_toolkit/create_folder", path });
+      await this._loadFiles();
+    } catch (e) {
+      this._setInfo(this._t("createFolderFail") + (e.message || e), true);
     }
   }
 
@@ -914,6 +950,7 @@ class NetDaemonToolkitPanel extends HTMLElement {
         ev.preventDefault();
         this._showCtx(ev.clientX, ev.clientY, [
           { label: this._t("ctxNewHere"), fn: () => this._promptCreate(dir.path) },
+          { label: this._t("ctxNewFolderHere"), fn: () => this._promptCreateFolder(dir.path) },
           { label: this._t("ctxRenameFolder"), fn: () => this._promptRenameFolder(dir.path) },
           { label: this._t("ctxDeleteFolder"), fn: () => this._deleteFolder(dir.path) },
         ]);
@@ -1395,7 +1432,7 @@ class NetDaemonToolkitPanel extends HTMLElement {
         .info { font-size:12px; min-height:1em; opacity:.8; }
         .info.error { color:var(--error-color,#c62828); opacity:1; }
         .muted { opacity:.6; font-size:13px; padding:6px; }
-        .nd-tools { display:flex; gap:6px; padding:0 6px 4px; }
+        .nd-tools { display:flex; flex-wrap:wrap; gap:6px; padding:0 6px 4px; }
         .tree-btn { cursor:pointer; border:1px solid var(--divider-color,#444); border-radius:6px;
                     background:var(--card-background-color,#111); color:var(--primary-text-color);
                     font-size:12px; padding:4px 8px; font-family:var(--nd-mono); }
@@ -1481,6 +1518,7 @@ class NetDaemonToolkitPanel extends HTMLElement {
             <div class="nd-dir"></div>
             <div class="nd-tools">
               <button class="tree-btn nd-new" title="${t("t_newFile")}">${t("btnNewFile")}</button>
+              <button class="tree-btn nd-new-folder" title="${t("t_newFolder")}">${t("btnNewFolder")}</button>
               <button class="tree-btn nd-refresh" title="${t("t_refreshList")}">⟳</button>
             </div>
             <input class="nd-filter" type="search" placeholder="${t("filter")}" spellcheck="false" />
@@ -1627,11 +1665,13 @@ class NetDaemonToolkitPanel extends HTMLElement {
     // File operations.
     this._ctx = this.querySelector(".nd-ctx");
     this.querySelector(".nd-new").addEventListener("click", () => this._promptCreate(""));
+    this.querySelector(".nd-new-folder").addEventListener("click", () => this._promptCreateFolder(""));
     this._list.addEventListener("contextmenu", (ev) => {
       if (ev.target === this._list) {
         ev.preventDefault();
         this._showCtx(ev.clientX, ev.clientY, [
           { label: this._t("ctxNew"), fn: () => this._promptCreate("") },
+          { label: this._t("ctxNewFolder"), fn: () => this._promptCreateFolder("") },
         ]);
       }
     });

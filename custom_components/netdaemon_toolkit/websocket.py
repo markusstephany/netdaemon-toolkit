@@ -100,6 +100,22 @@ def _list_files(base: Path) -> list[str]:
     return out
 
 
+def _list_folders(base: Path) -> list[str]:
+    """List every folder, including empty ones — the file list alone can't
+    surface a folder with no .cs files in it yet."""
+    if not base.exists():
+        return []
+    out = []
+    for p in sorted(base.rglob("*")):
+        if not p.is_dir():
+            continue
+        rel = p.relative_to(base)
+        if any(part.startswith("_") for part in rel.parts):
+            continue
+        out.append(rel.as_posix())
+    return out
+
+
 def _is_admin(connection) -> bool:
     return connection.user is not None and connection.user.is_admin
 
@@ -112,7 +128,10 @@ async def ws_list(hass, connection, msg):
         return
     base = _base_dir(hass)
     files = await hass.async_add_executor_job(_list_files, base)
-    connection.send_result(msg["id"], {"directory": str(base), "files": files})
+    folders = await hass.async_add_executor_job(_list_folders, base)
+    connection.send_result(
+        msg["id"], {"directory": str(base), "files": files, "folders": folders}
+    )
 
 
 @websocket_api.websocket_command(
@@ -187,6 +206,29 @@ async def ws_create(hass, connection, msg):
         path.write_text(msg.get("content", ""), encoding="utf-8")
 
     await hass.async_add_executor_job(_do)
+    connection.send_result(msg["id"], {"success": True})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "netdaemon_toolkit/create_folder",
+        vol.Required("path"): str,
+    }
+)
+@websocket_api.async_response
+async def ws_create_folder(hass, connection, msg):
+    if not _is_admin(connection):
+        connection.send_error(msg["id"], "unauthorized", "admin required")
+        return
+    try:
+        path = _safe_dir(hass, msg["path"])
+    except ValueError as err:
+        connection.send_error(msg["id"], "invalid_path", str(err))
+        return
+    if path.exists():
+        connection.send_error(msg["id"], "exists", "folder already exists")
+        return
+    await hass.async_add_executor_job(lambda: path.mkdir(parents=True))
     connection.send_result(msg["id"], {"success": True})
 
 
@@ -531,6 +573,7 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_read)
     websocket_api.async_register_command(hass, ws_write)
     websocket_api.async_register_command(hass, ws_create)
+    websocket_api.async_register_command(hass, ws_create_folder)
     websocket_api.async_register_command(hass, ws_rename)
     websocket_api.async_register_command(hass, ws_delete)
     websocket_api.async_register_command(hass, ws_rename_folder)
