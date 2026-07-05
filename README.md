@@ -65,7 +65,7 @@ without opening an IDE.
 |---|---|---|
 | `directory` | `/config/netdaemon` | Folder whose `.cs` files are editable |
 | `console_log` | — | Optional, path (from HA's own point of view) to NetDaemon's console log. Setup steps: [docs/architecture.md](docs/architecture.md#log-view-setup) |
-| `webhook_relays` | — | Optional, one relay per line: `<webhook_id>:<event_type>`. Each configured webhook fires the given event on HA's event bus with the webhook's JSON body as event data, so a NetDaemon app can subscribe to it directly. Needs a full HA restart to pick up changes. |
+| `webhook_relays` | — | Optional, one relay per line: `<webhook_id>:<event_type>`. Each configured webhook fires the given event on HA's event bus with the webhook's JSON body as event data, so a NetDaemon app can subscribe to it directly. Changes take effect as soon as you save (reconfigure), no restart needed. |
 
 ## Security
 

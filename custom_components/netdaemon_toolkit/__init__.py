@@ -31,7 +31,11 @@ from .const import (
     WEBCOMPONENT,
 )
 from .websocket import async_register_websocket_commands
-from .webhook_relay import async_register_webhook_relays, parse_relays
+from .webhook_relay import (
+    async_register_webhook_relays,
+    async_unregister_webhook_relays,
+    parse_relays,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -110,6 +114,18 @@ async def _ensure_generated_placeholder(hass: HomeAssistant, directory: str) -> 
     await hass.async_add_executor_job(_do)
 
 
+def _reconcile_webhook_relays(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Register the currently-configured webhook relays, unregistering
+    whatever this integration registered last time first. Runs on every
+    setup (including a reconfigure-triggered reload), so changing
+    webhook_relays takes effect immediately — no full HA restart needed."""
+    store = hass.data.setdefault(DOMAIN, {})
+    async_unregister_webhook_relays(hass, store.get("_webhook_ids", []))
+    relays = parse_relays(entry.data.get(CONF_WEBHOOK_RELAYS, DEFAULT_WEBHOOK_RELAYS))
+    async_register_webhook_relays(hass, relays)
+    store["_webhook_ids"] = [webhook_id for webhook_id, _ in relays]
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up the panel and WebSocket commands from a config entry."""
     store = hass.data.setdefault(DOMAIN, {})
@@ -135,9 +151,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             [StaticPathConfig(STATIC_URL, str(www), False)]
         )
         async_register_websocket_commands(hass)
-        relays = parse_relays(entry.data.get(CONF_WEBHOOK_RELAYS, DEFAULT_WEBHOOK_RELAYS))
-        async_register_webhook_relays(hass, relays)
         store["_registered"] = True
+
+    # Unlike the above, this re-runs on every setup so a reconfigure that
+    # changes webhook_relays takes effect without a full HA restart.
+    _reconcile_webhook_relays(hass, entry)
 
     await panel_custom.async_register_panel(
         hass,
@@ -181,5 +199,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     cancel = store.pop("_infra_timer", None)
     if cancel:
         cancel()
+    # If this is a genuine removal (not a reconfigure, which re-registers
+    # right after via _reconcile_webhook_relays), don't leave these active.
+    async_unregister_webhook_relays(hass, store.pop("_webhook_ids", []))
     store.pop("config", None)
     return True

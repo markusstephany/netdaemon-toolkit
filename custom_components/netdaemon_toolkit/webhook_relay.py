@@ -46,6 +46,15 @@ def async_register_webhook_relays(hass: HomeAssistant, relays: list[tuple[str, s
         _LOGGER.debug("Registered webhook relay %s -> event %s", webhook_id, event_type)
 
 
+def async_unregister_webhook_relays(hass: HomeAssistant, webhook_ids: list[str]) -> None:
+    """Unregister a previously-registered set of webhook IDs (e.g. before
+    re-registering the current config on a reconfigure, so stale/renamed
+    relays don't linger and changes take effect without a full HA restart)."""
+    for webhook_id in webhook_ids:
+        webhook.async_unregister(hass, webhook_id)
+        _LOGGER.debug("Unregistered webhook relay %s", webhook_id)
+
+
 def _make_handler(event_type: str):
     async def handle(hass: HomeAssistant, webhook_id: str, request) -> web.Response:
         try:
