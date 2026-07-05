@@ -11,7 +11,7 @@ and reading its status. Real development still happens in VS Code / Rider —
 this is for the "I'm away and one app won't compile" moment, or a quick edit
 without opening an IDE.
 
-📖 Deeper dive into how it's built: [docs/architecture.md](docs/architecture.md) (English) · [Blogbeitrag auf Deutsch](TODO-blog-url)
+📖 Deeper dive into how it's built: [docs/architecture.md](docs/architecture.md) (English) · [Blogbeitrag auf Deutsch](https://blog.stephanys.de/2026/07/netdaemon-toolkit-netdaemon-apps-direkt-aus-home-assistant-heraus-verwalten)
 
 ## Features
 
