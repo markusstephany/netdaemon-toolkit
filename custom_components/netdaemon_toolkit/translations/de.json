@@ -21,7 +21,8 @@
       }
     },
     "abort": {
-      "already_configured": "NetDaemon Toolkit ist bereits eingerichtet."
+      "already_configured": "NetDaemon Toolkit ist bereits eingerichtet.",
+      "reconfigure_successful": "Neukonfiguration erfolgreich abgeschlossen."
     }
   }
 }
