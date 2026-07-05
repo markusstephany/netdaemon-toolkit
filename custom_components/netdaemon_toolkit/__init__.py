@@ -21,6 +21,7 @@ from .const import (
     DEFAULT_DIRECTORY,
     DEFAULT_WEBHOOK_RELAYS,
     DOMAIN,
+    GENERATED_REL,
     PANEL_ICON,
     PANEL_TITLE,
     PANEL_URL,
@@ -54,12 +55,34 @@ async def _ensure_toolkit_apps(hass: HomeAssistant, directory: str) -> None:
     await hass.async_add_executor_job(_do)
 
 
+async def _ensure_generated_placeholder(hass: HomeAssistant, directory: str) -> None:
+    """Create an empty generated-entities file if none exists yet, so the
+    panel's regenerate button (attached to that file in the tree) has
+    something to attach to on a brand-new setup — before the "regenerate
+    entities" button has ever been used, that file wouldn't otherwise exist."""
+    dst = Path(directory) / GENERATED_REL
+
+    def _do() -> None:
+        if dst.exists():
+            return
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(
+            "// Placeholder — populated by the panel's \"regenerate entities\" button.\n",
+            encoding="utf-8",
+        )
+        _LOGGER.info("Created placeholder generated-entities file at %s", dst)
+
+    await hass.async_add_executor_job(_do)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up the panel and WebSocket commands from a config entry."""
     store = hass.data.setdefault(DOMAIN, {})
     store["config"] = dict(entry.data)
 
-    await _ensure_toolkit_apps(hass, entry.data.get(CONF_DIRECTORY, DEFAULT_DIRECTORY))
+    directory = entry.data.get(CONF_DIRECTORY, DEFAULT_DIRECTORY)
+    await _ensure_toolkit_apps(hass, directory)
+    await _ensure_generated_placeholder(hass, directory)
 
     # Serve the frontend and register the WebSocket commands once per HA start.
     if not store.get("_registered"):
