@@ -14,6 +14,7 @@ from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.loader import async_get_integration
 
 from .const import (
     CONF_DIRECTORY,
@@ -157,12 +158,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # changes webhook_relays takes effect without a full HA restart.
     _reconcile_webhook_relays(hass, entry)
 
+    # ?v= busts the frontend cache for the JS module. Tied to the integration
+    # version (not a hand-bumped literal) so every release that touches the
+    # JS automatically forces browsers to fetch the new file — a manually
+    # maintained counter here was previously forgotten across releases,
+    # leaving old cached JS in place after an update.
+    integration = await async_get_integration(hass, DOMAIN)
+
     await panel_custom.async_register_panel(
         hass,
         frontend_url_path=PANEL_URL,
         webcomponent_name=WEBCOMPONENT,
-        # ?v= busts the frontend service-worker cache; bump when the JS changes.
-        module_url=f"{STATIC_URL}/netdaemon-toolkit.js?v=3",
+        module_url=f"{STATIC_URL}/netdaemon-toolkit.js?v={integration.version}",
         sidebar_title=PANEL_TITLE,
         sidebar_icon=PANEL_ICON,
         require_admin=True,
