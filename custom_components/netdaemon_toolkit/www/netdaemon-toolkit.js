@@ -159,11 +159,14 @@ function isGenerated(path) {
 }
 
 // Filename (without .cs) -> NetDaemon class slug, e.g. HeatingShadowApp ->
-// heating_shadow_app. Used to match a file to its input_boolean.netdaemon_* toggle.
+// heating_shadow_app. Used to match a file to its input_boolean.netdaemon_*
+// toggle. Must match NetDaemon's own app-id derivation, which does not split
+// before a digit (e.g. O2TvAutostartApp -> o2tv_autostart_app, not
+// o2_tv_autostart_app) — see HaNetDaemon.Apps.Common.Tracer.Slug.
 function fileSlug(filename) {
   return filename
     .replace(/\.cs$/i, "")
-    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/([a-z])([A-Z])/g, "$1_$2")
     .toLowerCase();
 }
 
