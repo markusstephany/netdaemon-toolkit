@@ -101,6 +101,14 @@ Recreation happens if you change that service's definition in
 that happens, repeat step 1 for the new ID, update the volume line in step 2,
 and restart Home Assistant.
 
+**Avoiding that manual step:** if you'd rather not chase the ID by hand, run
+a host-side `docker logs -f <netdaemon-container-name>` (e.g. as a small
+systemd service) redirected into a *stable* file path instead, and bind-mount
+that path — since it resolves the container by name at each (re)attach, it
+survives recreation automatically. The log view auto-detects this: each line
+is parsed as Docker's json-file format if it's valid JSON, otherwise used
+as-is, so plain-text `docker logs` output works too.
+
 Since this reads the container's raw output independently of NetDaemon's own
 code, it works even for the case NetDaemon's own status/heartbeat file can't
 cover: a broken build. If your last edit doesn't compile, no app — not even

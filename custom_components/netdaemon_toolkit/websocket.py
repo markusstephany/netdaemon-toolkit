@@ -61,23 +61,30 @@ def _reject_if_reserved(hass, connection, msg, *paths: Path) -> bool:
 
 
 def _read_console_log(path: Path, tail: int) -> str:
-    """Read the last `tail` entries of Docker's own json-file container log.
+    """Read the last `tail` entries of the mounted NetDaemon console log.
 
-    One JSON object per line ({"log": "...", "stream": "...", "time": "..."}),
-    written by Docker itself independently of anything NetDaemon does — this
-    is what makes it work even for a compile failure that crashes before any
-    of our own code runs. No size cap here; if the file has no docker-level
-    log rotation configured it can grow large — see the README.
+    Supports two formats, auto-detected per line:
+    - Docker's own json-file container log — one JSON object per line
+      ({"log": "...", "stream": "...", "time": "..."}), written by Docker
+      itself independently of anything NetDaemon does. This is what makes
+      it work even for a compile failure that crashes before any of our own
+      code runs. No size cap here; if the file has no docker-level log
+      rotation configured it can grow large — see the README.
+    - Plain text — e.g. from a `docker logs -f <name> >> file` tail that
+      survives container recreation (unlike a direct bind mount of Docker's
+      own log file, which is tied to the container's ID and goes stale the
+      moment it's recreated). A line that isn't valid JSON is used as-is.
     """
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     out = []
     for line in lines[-tail:]:
-        line = line.strip()
-        if not line:
+        stripped = line.strip()
+        if not stripped:
             continue
         try:
-            entry = json.loads(line)
+            entry = json.loads(stripped)
         except ValueError:
+            out.append(line + "\n")
             continue
         out.append(entry.get("log", ""))
     return _ANSI.sub("", "".join(out))
