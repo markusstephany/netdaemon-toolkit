@@ -11,9 +11,10 @@ DEFAULT_DIRECTORY = "/config/netdaemon"
 DEFAULT_WEBHOOK_RELAYS = ""
 DEFAULT_CONSOLE_LOG = ""
 
-# Only these file types may be listed/read/written, so the panel can never be
-# turned into a general-purpose file editor for the whole config tree.
-ALLOWED_EXTENSIONS = (".cs",)
+# .cs is what the tree shows by default; the panel's "show all files" toggle
+# switches to listing/editing every file under the base directory instead
+# (still confined to that directory — see _safe_path in websocket.py).
+DEFAULT_EXTENSIONS = (".cs",)
 
 # "Regenerate entities": ws_codegen fires CODEGEN_EVENT, a NetDaemon-side app
 # (CodegenApp) runs nd-codegen as a plain subprocess of itself (no Docker

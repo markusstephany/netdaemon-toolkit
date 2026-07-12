@@ -6,6 +6,14 @@
 
 const CM_BASE = "/netdaemon_toolkit_static/vendor/codemirror";
 const WIDTH_KEY = "nd-editor-left-width";
+const SHOW_ALL_KEY = "nd-show-all-files";
+
+// CodeMirror mode by extension. Only C# (clike) ships as a vendored mode
+// (see www/vendor/codemirror); everything else falls back to plain text —
+// still viewable/editable, just without syntax highlighting.
+function modeFor(path) {
+  return /\.cs$/i.test(path) ? "text/x-csharp" : "text/plain";
+}
 
 // Material Design icon paths (folder, folder-open, file-document-outline).
 const ICONS = {
@@ -51,6 +59,7 @@ const I18N = {
     reloadFail: "Reload failed: ",
     discard: "Discard unsaved changes?",
     noFiles: "No .cs files found.", noMatches: "No matches.",
+    showAll: "Show all files", t_showAll: "Show and edit every file under this directory, not just .cs",
     matches: "{n} matches",
     opened: "Opened: ", saved: "Saved: ",
     openFail: "Open failed: ", saveFail: "Save failed: ", loadFail: "Load failed: ",
@@ -116,6 +125,7 @@ const I18N = {
     reloadFail: "Reload fehlgeschlagen: ",
     discard: "Ungespeicherte Änderungen verwerfen?",
     noFiles: "Keine .cs-Dateien gefunden.", noMatches: "Keine Treffer.",
+    showAll: "Alle Dateien zeigen", t_showAll: "Jede Datei in diesem Verzeichnis anzeigen und bearbeiten, nicht nur .cs",
     matches: "{n} Treffer",
     opened: "Geöffnet: ", saved: "Gespeichert: ",
     openFail: "Öffnen fehlgeschlagen: ", saveFail: "Speichern fehlgeschlagen: ", loadFail: "Laden fehlgeschlagen: ",
@@ -225,6 +235,7 @@ class NetDaemonToolkitPanel extends HTMLElement {
     this._folders = [];
     this._reserved = [];
     this._expanded = new Set(["apps"]); // folder paths expanded; everything but apps/ itself starts collapsed
+    this._showAll = window.localStorage.getItem(SHOW_ALL_KEY) === "1";
     this._filter = "";
     this._tabs = []; // open files: {path, doc/savedGen (CM) or content/savedContent (textarea)}
     this._active = null;
@@ -524,7 +535,7 @@ class NetDaemonToolkitPanel extends HTMLElement {
 
   async _loadFiles() {
     try {
-      const res = await this._ws({ type: "netdaemon_toolkit/list" });
+      const res = await this._ws({ type: "netdaemon_toolkit/list", all_files: this._showAll });
       this._files = res.files || [];
       this._folders = res.folders || [];
       this._reserved = res.reserved || [];
@@ -568,7 +579,7 @@ class NetDaemonToolkitPanel extends HTMLElement {
       const content = res.content || "";
       const tab = { path };
       if (this._cm) {
-        tab.doc = window.CodeMirror.Doc(content, "text/x-csharp");
+        tab.doc = window.CodeMirror.Doc(content, modeFor(path));
         tab.savedGen = tab.doc.changeGeneration();
       } else {
         tab.content = content;
@@ -822,7 +833,7 @@ class NetDaemonToolkitPanel extends HTMLElement {
     if (!name) return;
     name = name.trim();
     if (!name) return;
-    if (!name.endsWith(".cs")) name += ".cs";
+    if (!this._showAll && !name.endsWith(".cs")) name += ".cs";
     const path = baseDir ? baseDir + "/" + name : name;
     try {
       await this._ws({ type: "netdaemon_toolkit/create", path, content: "" });
@@ -855,7 +866,7 @@ class NetDaemonToolkitPanel extends HTMLElement {
     if (!np) return;
     np = np.trim();
     if (!np || np === path) return;
-    if (!np.endsWith(".cs")) np += ".cs";
+    if (!this._showAll && !np.endsWith(".cs")) np += ".cs";
     try {
       await this._ws({ type: "netdaemon_toolkit/rename", path, new_path: np });
       const tab = this._tabs.find((t) => t.path === path);
@@ -1447,6 +1458,9 @@ class NetDaemonToolkitPanel extends HTMLElement {
                      border:1px solid var(--divider-color,#ccc);
                      background:var(--card-background-color,#fff); color:var(--primary-text-color);
                      font-family:var(--nd-mono); font-size:13px; }
+        .nd-show-all { display:flex; align-items:center; gap:5px; margin:0 6px 6px;
+                       font-size:11.5px; opacity:.75; cursor:pointer; user-select:none; }
+        .nd-show-all input { margin:0; cursor:pointer; }
         .nd-list { overflow:auto; padding:6px; display:flex; flex-direction:column; gap:1px; }
         .folder, .file { display:flex; align-items:center; text-align:left; background:none;
                          border:none; cursor:pointer; padding:5px 8px; border-radius:8px;
@@ -1619,6 +1633,10 @@ class NetDaemonToolkitPanel extends HTMLElement {
               <button class="tree-btn nd-refresh" title="${t("t_refreshList")}">⟳</button>
             </div>
             <input class="nd-filter" type="search" placeholder="${t("filter")}" spellcheck="false" />
+            <label class="nd-show-all" title="${t("t_showAll")}">
+              <input type="checkbox" class="nd-show-all-cb" ${this._showAll ? "checked" : ""} />
+              ${t("showAll")}
+            </label>
             <div class="nd-list"></div>
           </div>
           <div class="nd-splitter"></div>
@@ -1691,6 +1709,11 @@ class NetDaemonToolkitPanel extends HTMLElement {
       this._renderTree();
     });
     this.querySelector(".nd-refresh").addEventListener("click", () => this._loadFiles());
+    this.querySelector(".nd-show-all-cb").addEventListener("change", (e) => {
+      this._showAll = e.target.checked;
+      window.localStorage.setItem(SHOW_ALL_KEY, this._showAll ? "1" : "0");
+      this._loadFiles();
+    });
     this.querySelector(".nd-reload").addEventListener("click", () => this._reloadNetDaemon());
     this._saveBtn.addEventListener("click", () => this._save());
 

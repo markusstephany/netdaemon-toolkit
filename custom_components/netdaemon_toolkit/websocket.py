@@ -15,7 +15,6 @@ from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant
 
 from .const import (
-    ALLOWED_EXTENSIONS,
     CODEGEN_EVENT,
     CODEGEN_RESULT_REL,
     CODEGEN_TIMEOUT,
@@ -23,6 +22,7 @@ from .const import (
     CONF_DIRECTORY,
     DEFAULT_CONSOLE_LOG,
     DEFAULT_DIRECTORY,
+    DEFAULT_EXTENSIONS,
     DOMAIN,
     TOOLKIT_APPS_REL,
 )
@@ -96,13 +96,16 @@ def _base_dir(hass: HomeAssistant) -> Path:
 
 
 def _safe_path(hass: HomeAssistant, rel: str) -> Path:
-    """Resolve a relative path inside the base dir, rejecting escapes and types."""
+    """Resolve a relative path inside the base dir, rejecting escapes.
+
+    File type is not restricted here: the base directory itself is the
+    security boundary (the "show all files" toggle lets the panel edit any
+    file under it, not just .cs).
+    """
     base = _base_dir(hass)
     target = (base / rel).resolve()
     if target != base and base not in target.parents:
         raise ValueError("path outside of base directory")
-    if target.suffix not in ALLOWED_EXTENSIONS:
-        raise ValueError("file type not allowed")
     return target
 
 
@@ -115,12 +118,14 @@ def _safe_dir(hass: HomeAssistant, rel: str) -> Path:
     return target
 
 
-def _list_files(base: Path) -> list[str]:
+def _list_files(base: Path, all_files: bool) -> list[str]:
     if not base.exists():
         return []
     out = []
     for p in sorted(base.rglob("*")):
-        if not p.is_file() or p.suffix not in ALLOWED_EXTENSIONS:
+        if not p.is_file():
+            continue
+        if not all_files and p.suffix not in DEFAULT_EXTENSIONS:
             continue
         out.append(p.relative_to(base).as_posix())
     return out
@@ -143,14 +148,19 @@ def _is_admin(connection) -> bool:
     return connection.user is not None and connection.user.is_admin
 
 
-@websocket_api.websocket_command({vol.Required("type"): "netdaemon_toolkit/list"})
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "netdaemon_toolkit/list",
+        vol.Optional("all_files", default=False): bool,
+    }
+)
 @websocket_api.async_response
 async def ws_list(hass, connection, msg):
     if not _is_admin(connection):
         connection.send_error(msg["id"], "unauthorized", "admin required")
         return
     base = _base_dir(hass)
-    files = await hass.async_add_executor_job(_list_files, base)
+    files = await hass.async_add_executor_job(_list_files, base, msg["all_files"])
     folders = await hass.async_add_executor_job(_list_folders, base)
     connection.send_result(
         msg["id"],
