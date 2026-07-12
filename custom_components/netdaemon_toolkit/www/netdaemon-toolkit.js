@@ -224,7 +224,7 @@ class NetDaemonToolkitPanel extends HTMLElement {
     this._files = [];
     this._folders = [];
     this._reserved = [];
-    this._collapsed = new Set(); // folder paths that are collapsed (default: all open)
+    this._expanded = new Set(); // folder paths explicitly expanded by the user (default: all collapsed)
     this._filter = "";
     this._tabs = []; // open files: {path, doc/savedGen (CM) or content/savedContent (textarea)}
     this._active = null;
@@ -947,7 +947,7 @@ class NetDaemonToolkitPanel extends HTMLElement {
     for (const name of Object.keys(node.dirs).sort()) {
       const dir = node.dirs[name];
       if (filtering && !this._dirHasMatch(dir)) continue;
-      const open = filtering ? true : !this._collapsed.has(dir.path);
+      const open = filtering ? true : this._expanded.has(dir.path);
       const gen = isGenerated(dir.path);
       const reserved = this._isReserved(dir.path);
       const head = document.createElement("button");
@@ -960,8 +960,8 @@ class NetDaemonToolkitPanel extends HTMLElement {
         `<span class="lbl"></span>`;
       head.querySelector(".lbl").textContent = name;
       head.addEventListener("click", () => {
-        if (this._collapsed.has(dir.path)) this._collapsed.delete(dir.path);
-        else this._collapsed.add(dir.path);
+        if (this._expanded.has(dir.path)) this._expanded.delete(dir.path);
+        else this._expanded.add(dir.path);
         this._renderTree();
       });
       if (!reserved) {
@@ -974,6 +974,62 @@ class NetDaemonToolkitPanel extends HTMLElement {
             { label: this._t("ctxDeleteFolder"), fn: () => this._deleteFolder(dir.path) },
           ]);
         });
+      }
+      // A folder's action buttons (regenerate / on-off toggle / trace) key
+      // off whichever direct child file matches — e.g. WashingMachineApp.cs
+      // inside apps/WashingMachine/ owns the toggle+trace, so the folder row
+      // gets them instead of the individual file row. Lets a domain folder
+      // with several files (the app + its pure-logic files) act as the one
+      // place to control/inspect that app, without needing it expanded.
+      const genFile = dir.files.find((f) => isGenerated(f.path));
+      if (genFile) {
+        const rg = document.createElement("button");
+        rg.className = "nd-regen";
+        rg.textContent = "⟲";
+        rg.title = this._t("t_codegen");
+        rg.disabled = !!this._codegenBusy;
+        rg.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          this._runCodegen();
+        });
+        head.appendChild(rg);
+      }
+      let toggleId, traceMatch;
+      for (const f of dir.files) {
+        const slug = fileSlug(f.name);
+        if (!toggleId) {
+          const id = (this._appToggleEntities || []).find((tid) => tid.endsWith("_" + slug));
+          if (id) toggleId = id;
+        }
+        if (!traceMatch && this._traceApps && this._traceApps.has(slug)) {
+          traceMatch = { slug, name: f.name };
+        }
+      }
+      if (toggleId) {
+        const tg = document.createElement("span");
+        tg.className = "app-toggle";
+        tg.dataset.entity = toggleId;
+        tg.title = this._t("appToggleTitle");
+        tg.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          const on =
+            this._hass.states[toggleId] && this._hass.states[toggleId].state === "on";
+          this._hass.callService(
+            "input_boolean", on ? "turn_off" : "turn_on", { entity_id: toggleId }
+          );
+        });
+        head.appendChild(tg);
+      }
+      if (traceMatch) {
+        const tb = document.createElement("button");
+        tb.className = "nd-trace";
+        tb.innerHTML = svgIcon(ICONS.history);
+        tb.title = this._t("t_traces");
+        tb.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          this._openTraces(traceMatch.slug, traceMatch.name);
+        });
+        head.appendChild(tb);
       }
       container.appendChild(head);
       if (open) this._renderNode(dir, depth + 1, container);
@@ -990,48 +1046,51 @@ class NetDaemonToolkitPanel extends HTMLElement {
       if (reserved) item.title = this._t("reservedTooltip");
       item.innerHTML = svgIcon(ICONS.file) + `<span class="lbl"></span>`;
       item.querySelector(".lbl").textContent = file.name;
-      if (gen) {
-        item.title = this._t("genTooltip");
-        // The generated entities file gets a regenerate button, the way app
-        // files get an on/off toggle.
-        const rg = document.createElement("button");
-        rg.className = "nd-regen";
-        rg.textContent = "⟲";
-        rg.title = this._t("t_codegen");
-        rg.disabled = !!this._codegenBusy;
-        rg.addEventListener("click", (ev) => {
-          ev.stopPropagation();
-          this._runCodegen();
-        });
-        item.appendChild(rg);
-      }
-      const slug = fileSlug(file.name);
-      const toggleId = (this._appToggleEntities || []).find((id) => id.endsWith("_" + slug));
-      if (toggleId) {
-        const tg = document.createElement("span");
-        tg.className = "app-toggle";
-        tg.dataset.entity = toggleId;
-        tg.title = this._t("appToggleTitle");
-        tg.addEventListener("click", (ev) => {
-          ev.stopPropagation();
-          const on =
-            this._hass.states[toggleId] && this._hass.states[toggleId].state === "on";
-          this._hass.callService(
-            "input_boolean", on ? "turn_off" : "turn_on", { entity_id: toggleId }
-          );
-        });
-        item.appendChild(tg);
-      }
-      if (this._traceApps && this._traceApps.has(slug)) {
-        const tb = document.createElement("button");
-        tb.className = "nd-trace";
-        tb.innerHTML = svgIcon(ICONS.history);
-        tb.title = this._t("t_traces");
-        tb.addEventListener("click", (ev) => {
-          ev.stopPropagation();
-          this._openTraces(slug, file.name);
-        });
-        item.appendChild(tb);
+      if (gen) item.title = this._t("genTooltip");
+      // Regenerate / on-off toggle / trace buttons live on the enclosing
+      // folder row now (see the dirs loop above) — except at the tree root,
+      // where a file has no parent folder to host them.
+      if (node.path === "") {
+        if (gen) {
+          const rg = document.createElement("button");
+          rg.className = "nd-regen";
+          rg.textContent = "⟲";
+          rg.title = this._t("t_codegen");
+          rg.disabled = !!this._codegenBusy;
+          rg.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            this._runCodegen();
+          });
+          item.appendChild(rg);
+        }
+        const slug = fileSlug(file.name);
+        const toggleId = (this._appToggleEntities || []).find((id) => id.endsWith("_" + slug));
+        if (toggleId) {
+          const tg = document.createElement("span");
+          tg.className = "app-toggle";
+          tg.dataset.entity = toggleId;
+          tg.title = this._t("appToggleTitle");
+          tg.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            const on =
+              this._hass.states[toggleId] && this._hass.states[toggleId].state === "on";
+            this._hass.callService(
+              "input_boolean", on ? "turn_off" : "turn_on", { entity_id: toggleId }
+            );
+          });
+          item.appendChild(tg);
+        }
+        if (this._traceApps && this._traceApps.has(slug)) {
+          const tb = document.createElement("button");
+          tb.className = "nd-trace";
+          tb.innerHTML = svgIcon(ICONS.history);
+          tb.title = this._t("t_traces");
+          tb.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            this._openTraces(slug, file.name);
+          });
+          item.appendChild(tb);
+        }
       }
       item.addEventListener("click", () => this._open(file.path));
       if (!reserved) {
