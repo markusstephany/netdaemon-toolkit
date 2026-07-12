@@ -224,7 +224,7 @@ class NetDaemonToolkitPanel extends HTMLElement {
     this._files = [];
     this._folders = [];
     this._reserved = [];
-    this._expanded = new Set(); // folder paths explicitly expanded by the user (default: all collapsed)
+    this._expanded = new Set(["apps"]); // folder paths expanded; everything but apps/ itself starts collapsed
     this._filter = "";
     this._tabs = []; // open files: {path, doc/savedGen (CM) or content/savedContent (textarea)}
     this._active = null;
@@ -942,7 +942,8 @@ class NetDaemonToolkitPanel extends HTMLElement {
     return Object.keys(dir.dirs).some((n) => this._dirHasMatch(dir.dirs[n]));
   }
 
-  _renderNode(node, depth, container) {
+  _renderNode(node, depth, container, claimed) {
+    claimed = claimed || {}; // { [filePath]: { gen, toggle, trace } } already shown on the parent folder row
     const filtering = !!this._filter;
     for (const name of Object.keys(node.dirs).sort()) {
       const dir = node.dirs[name];
@@ -980,9 +981,15 @@ class NetDaemonToolkitPanel extends HTMLElement {
       // inside apps/WashingMachine/ owns the toggle+trace, so the folder row
       // gets them instead of the individual file row. Lets a domain folder
       // with several files (the app + its pure-logic files) act as the one
-      // place to control/inspect that app, without needing it expanded.
-      const genFile = dir.files.find((f) => isGenerated(f.path));
-      if (genFile) {
+      // place to control/inspect that app, without needing it expanded. But
+      // a folder can hold SEVERAL independent apps too (e.g. apps/_toolkit/
+      // has 3) — only promote a button when exactly one file in the folder
+      // matches, otherwise leave it per-file so each app stays individually
+      // controllable.
+      const childClaimed = {};
+      const genMatches = dir.files.filter((f) => isGenerated(f.path));
+      if (genMatches.length === 1) {
+        const f = genMatches[0];
         const rg = document.createElement("button");
         rg.className = "nd-regen";
         rg.textContent = "⟲";
@@ -993,19 +1000,18 @@ class NetDaemonToolkitPanel extends HTMLElement {
           this._runCodegen();
         });
         head.appendChild(rg);
+        (childClaimed[f.path] ||= {}).gen = true;
       }
-      let toggleId, traceMatch;
+      const toggleMatches = [];
+      const traceMatches = [];
       for (const f of dir.files) {
         const slug = fileSlug(f.name);
-        if (!toggleId) {
-          const id = (this._appToggleEntities || []).find((tid) => tid.endsWith("_" + slug));
-          if (id) toggleId = id;
-        }
-        if (!traceMatch && this._traceApps && this._traceApps.has(slug)) {
-          traceMatch = { slug, name: f.name };
-        }
+        const id = (this._appToggleEntities || []).find((tid) => tid.endsWith("_" + slug));
+        if (id) toggleMatches.push({ file: f, id });
+        if (this._traceApps && this._traceApps.has(slug)) traceMatches.push({ file: f, slug });
       }
-      if (toggleId) {
+      if (toggleMatches.length === 1) {
+        const { file: f, id: toggleId } = toggleMatches[0];
         const tg = document.createElement("span");
         tg.className = "app-toggle";
         tg.dataset.entity = toggleId;
@@ -1019,25 +1025,29 @@ class NetDaemonToolkitPanel extends HTMLElement {
           );
         });
         head.appendChild(tg);
+        (childClaimed[f.path] ||= {}).toggle = true;
       }
-      if (traceMatch) {
+      if (traceMatches.length === 1) {
+        const { file: f, slug } = traceMatches[0];
         const tb = document.createElement("button");
         tb.className = "nd-trace";
         tb.innerHTML = svgIcon(ICONS.history);
         tb.title = this._t("t_traces");
         tb.addEventListener("click", (ev) => {
           ev.stopPropagation();
-          this._openTraces(traceMatch.slug, traceMatch.name);
+          this._openTraces(slug, f.name);
         });
         head.appendChild(tb);
+        (childClaimed[f.path] ||= {}).trace = true;
       }
       container.appendChild(head);
-      if (open) this._renderNode(dir, depth + 1, container);
+      if (open) this._renderNode(dir, depth + 1, container, childClaimed);
     }
     for (const file of node.files.sort((a, b) => a.name.localeCompare(b.name))) {
       if (!this._fileMatches(file.name)) continue;
       const gen = isGenerated(file.path);
       const reserved = this._isReserved(file.path);
+      const claim = claimed[file.path] || {};
       const item = document.createElement("button");
       item.className =
         "file" + (file.path === this._active ? " active" : "") +
@@ -1047,23 +1057,24 @@ class NetDaemonToolkitPanel extends HTMLElement {
       item.innerHTML = svgIcon(ICONS.file) + `<span class="lbl"></span>`;
       item.querySelector(".lbl").textContent = file.name;
       if (gen) item.title = this._t("genTooltip");
-      // Regenerate / on-off toggle / trace buttons live on the enclosing
-      // folder row now (see the dirs loop above) — except at the tree root,
-      // where a file has no parent folder to host them.
-      if (node.path === "") {
-        if (gen) {
-          const rg = document.createElement("button");
-          rg.className = "nd-regen";
-          rg.textContent = "⟲";
-          rg.title = this._t("t_codegen");
-          rg.disabled = !!this._codegenBusy;
-          rg.addEventListener("click", (ev) => {
-            ev.stopPropagation();
-            this._runCodegen();
-          });
-          item.appendChild(rg);
-        }
-        const slug = fileSlug(file.name);
+      // Regenerate / on-off toggle / trace buttons normally live on the
+      // enclosing folder row (see the dirs loop above) — except when the
+      // folder couldn't claim them (tree root with no parent folder, or a
+      // folder holding several independent apps, each keeping its own).
+      if (gen && !claim.gen) {
+        const rg = document.createElement("button");
+        rg.className = "nd-regen";
+        rg.textContent = "⟲";
+        rg.title = this._t("t_codegen");
+        rg.disabled = !!this._codegenBusy;
+        rg.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          this._runCodegen();
+        });
+        item.appendChild(rg);
+      }
+      const slug = fileSlug(file.name);
+      if (!claim.toggle) {
         const toggleId = (this._appToggleEntities || []).find((id) => id.endsWith("_" + slug));
         if (toggleId) {
           const tg = document.createElement("span");
@@ -1080,17 +1091,17 @@ class NetDaemonToolkitPanel extends HTMLElement {
           });
           item.appendChild(tg);
         }
-        if (this._traceApps && this._traceApps.has(slug)) {
-          const tb = document.createElement("button");
-          tb.className = "nd-trace";
-          tb.innerHTML = svgIcon(ICONS.history);
-          tb.title = this._t("t_traces");
-          tb.addEventListener("click", (ev) => {
-            ev.stopPropagation();
-            this._openTraces(slug, file.name);
-          });
-          item.appendChild(tb);
-        }
+      }
+      if (!claim.trace && this._traceApps && this._traceApps.has(slug)) {
+        const tb = document.createElement("button");
+        tb.className = "nd-trace";
+        tb.innerHTML = svgIcon(ICONS.history);
+        tb.title = this._t("t_traces");
+        tb.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          this._openTraces(slug, file.name);
+        });
+        item.appendChild(tb);
       }
       item.addEventListener("click", () => this._open(file.path));
       if (!reserved) {
