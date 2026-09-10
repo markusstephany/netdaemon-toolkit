@@ -5,6 +5,7 @@ file extensions, so the panel cannot reach the rest of the config tree.
 """
 import asyncio
 import json
+import os
 import re
 import shutil
 import time
@@ -15,15 +16,25 @@ from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant
 
 from .const import (
+    ACTIVE_ASSEMBLY_REL,
+    APP_DIR_REL,
+    APP_ENTRY_FILE,
+    APP_LAST_DIR_REL,
     CODEGEN_EVENT,
     CODEGEN_RESULT_REL,
     CODEGEN_TIMEOUT,
     CONF_CONSOLE_LOG,
     CONF_DIRECTORY,
+    CONTAINER_DATA_ROOT,
     DEFAULT_CONSOLE_LOG,
     DEFAULT_DIRECTORY,
     DEFAULT_EXTENSIONS,
     DOMAIN,
+    EXPECTED_APPLICATION_ASSEMBLY,
+    REBUILD_EVENT,
+    REBUILD_RESULT_REL,
+    REBUILD_TIMEOUT,
+    SOURCE_HOST_ASSEMBLY,
     TOOLKIT_APPS_REL,
 )
 
@@ -146,6 +157,48 @@ def _list_folders(base: Path) -> list[str]:
 
 def _is_admin(connection) -> bool:
     return connection.user is not None and connection.user.is_admin
+
+
+def _read_application_assembly(base: Path) -> str | None:
+    p = base / ".nd_status.json"
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text(encoding="utf-8")).get("applicationAssembly")
+    except Exception:
+        return None
+
+
+async def _compiled_build_ready(hass: HomeAssistant, base: Path) -> bool:
+    application_assembly = await hass.async_add_executor_job(_read_application_assembly, base)
+    return application_assembly == EXPECTED_APPLICATION_ASSEMBLY
+
+
+def _read_current_mode(base: Path) -> str | None:
+    """Read the ActiveAssemblyPath symlink's *current target* directly off the shared volume --
+    no need to ask the container at all, this is just a file. "compiled" only when the symlink
+    exists and points at our own build; "source" both when it points at the vendor's own host AND
+    when the symlink doesn't exist at all yet (NetDaemon__ApplicationAssembly unset entirely is
+    functionally the same source-deploy path, just via the run script's other branch -- see
+    const.py). None only for a genuinely unexpected target, e.g. app-last during a manual rollback."""
+    try:
+        target = os.readlink(base / ACTIVE_ASSEMBLY_REL)
+    except OSError:
+        return "source"
+    if target == SOURCE_HOST_ASSEMBLY:
+        return "source"
+    if target == f"{CONTAINER_DATA_ROOT}/{APP_DIR_REL}/{APP_ENTRY_FILE}":
+        return "compiled"
+    return None
+
+
+def _not_ready_reason(hass: HomeAssistant) -> str:
+    return {
+        "en": f"NetDaemon__ApplicationAssembly isn't set to {EXPECTED_APPLICATION_ASSEMBLY} yet in "
+        "docker-compose.yml. Add it and restart the container once -- after that, this takes effect.",
+        "de": f"NetDaemon__ApplicationAssembly steht in der docker-compose.yml noch nicht auf "
+        f"{EXPECTED_APPLICATION_ASSEMBLY}. Einmal eintragen und den Container neu starten -- danach wirkt das.",
+    }[_lang(hass)]
 
 
 @websocket_api.websocket_command(
@@ -401,15 +454,19 @@ async def ws_delete_folder(hass, connection, msg):
 @websocket_api.websocket_command({vol.Required("type"): "netdaemon_toolkit/status"})
 @websocket_api.async_response
 async def ws_status(hass, connection, msg):
-    """Read the NetDaemon heartbeat file (.nd_status.json) and report liveness."""
+    """Read the NetDaemon heartbeat file (.nd_status.json) and report liveness.
+
+    Also reports whether NetDaemon__ApplicationAssembly is set to the expected symlink path --
+    same idiom as CONF_CONSOLE_LOG (see const.py): no separate on/off setting, the panel just
+    shows the Rebuild/switch/rollback actions once this one-time docker-compose.yml edit has
+    actually been made, and stays exactly as it is today otherwise.
+    """
     if not _is_admin(connection):
         connection.send_error(msg["id"], "unauthorized", "admin required")
         return
     base = _base_dir(hass)
 
-    def _read():
-        import json
-
+    def _read_ts():
         p = base / ".nd_status.json"
         if not p.exists():
             return None
@@ -418,13 +475,145 @@ async def ws_status(hass, connection, msg):
         except Exception:
             return None
 
-    import time
-
-    ts = await hass.async_add_executor_job(_read)
+    ts = await hass.async_add_executor_job(_read_ts)
+    application_assembly = await hass.async_add_executor_job(_read_application_assembly, base)
+    current_mode = await hass.async_add_executor_job(_read_current_mode, base)
     age = None if ts is None else max(0, int(time.time()) - ts)
     connection.send_result(
-        msg["id"], {"ts": ts, "age": age, "alive": age is not None and age <= 30}
+        msg["id"],
+        {
+            "ts": ts,
+            "age": age,
+            "alive": age is not None and age <= 30,
+            "compiled_build_ready": application_assembly == EXPECTED_APPLICATION_ASSEMBLY,
+            "current_mode": current_mode,
+            "expected_application_assembly": EXPECTED_APPLICATION_ASSEMBLY,
+        },
     )
+
+
+@websocket_api.websocket_command({vol.Required("type"): "netdaemon_toolkit/rebuild"})
+@websocket_api.async_response
+async def ws_rebuild(hass, connection, msg):
+    """Trigger a rebuild of the compiled host from source (needs the compiled-build symlink set up, see const.py).
+
+    No Docker access involved: fires an HA event a NetDaemon-side app (RebuildApp) listens for,
+    then polls the result file it writes when done -- same shape as ws_codegen. A failed build
+    leaves the running deployment untouched; a successful one re-points the ActiveAssemblyPath
+    symlink and restarts, so the container relaunches into the new build automatically.
+    """
+    if not _is_admin(connection):
+        connection.send_error(msg["id"], "unauthorized", "admin required")
+        return
+    base = _base_dir(hass)
+    if not await _compiled_build_ready(hass, base):
+        connection.send_result(msg["id"], {"success": False, "reason": _not_ready_reason(hass)})
+        return
+    result_path = base / REBUILD_RESULT_REL
+    start_ts = int(time.time())
+
+    hass.bus.async_fire(REBUILD_EVENT)
+
+    def _read():
+        if not result_path.exists():
+            return None
+        try:
+            data = json.loads(result_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return data if data.get("ts", 0) >= start_ts - 1 else None
+
+    deadline = start_ts + REBUILD_TIMEOUT + 10
+    while time.time() < deadline:
+        data = await hass.async_add_executor_job(_read)
+        if data is not None:
+            connection.send_result(msg["id"], data)
+            return
+        await asyncio.sleep(2)
+
+    timeout_reason = {
+        "en": "Timed out waiting for the rebuild result.",
+        "de": "Zeitüberschreitung beim Warten auf das Build-Ergebnis.",
+    }
+    connection.send_result(
+        msg["id"],
+        {"success": False, "reason": timeout_reason[_lang(hass)]},
+    )
+
+
+def _point_active_assembly(base: Path, target: str) -> None:
+    """Re-point the ActiveAssemblyPath symlink at `target` (a container-side absolute path, e.g.
+    "/data/app/Service.dll" -- never built from `base`, which is this integration's own,
+    differently-mounted view of the same host directory)."""
+    link = base / ACTIVE_ASSEMBLY_REL
+    try:
+        link.unlink()
+    except FileNotFoundError:
+        pass
+    os.symlink(target, link)
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): "netdaemon_toolkit/switch_mode", vol.Required("mode"): str}
+)
+@websocket_api.async_response
+async def ws_switch_mode(hass, connection, msg):
+    """Switch between source-deploy and the compiled build (needs the compiled-build symlink set up, see const.py).
+
+    Pure symlink re-point on the shared volume, done directly here (no dotnet build involved, so
+    no need to round-trip through a NetDaemon-side app) -- then asks NetDaemon to reload so the
+    container relaunches through the newly-pointed symlink.
+    """
+    if not _is_admin(connection):
+        connection.send_error(msg["id"], "unauthorized", "admin required")
+        return
+    mode = msg["mode"]
+    base = _base_dir(hass)
+    if not await _compiled_build_ready(hass, base):
+        connection.send_result(msg["id"], {"success": False, "reason": _not_ready_reason(hass)})
+        return
+
+    if mode == "source":
+        target = SOURCE_HOST_ASSEMBLY
+    elif mode == "compiled":
+        entry = base / APP_DIR_REL / APP_ENTRY_FILE
+        if not await hass.async_add_executor_job(entry.exists):
+            connection.send_result(
+                msg["id"], {"success": False, "reason": "No compiled build exists yet -- use Rebuild first."}
+            )
+            return
+        target = f"{CONTAINER_DATA_ROOT}/{APP_DIR_REL}/{APP_ENTRY_FILE}"
+    else:
+        connection.send_error(msg["id"], "invalid_mode", f"Unknown mode '{mode}'")
+        return
+
+    await hass.async_add_executor_job(_point_active_assembly, base, target)
+    hass.bus.async_fire("netdaemon_toolkit_reload", {})
+    connection.send_result(msg["id"], {"success": True, "mode": mode})
+
+
+@websocket_api.websocket_command({vol.Required("type"): "netdaemon_toolkit/rollback"})
+@websocket_api.async_response
+async def ws_rollback(hass, connection, msg):
+    """Roll back to the last build that preceded the currently active one (needs the compiled-build symlink set up, see const.py).
+
+    Pure symlink re-point, same as ws_switch_mode -- deliberately independent of the running
+    container's cooperation, since the whole point is recovering from a build that compiled fine
+    but doesn't come up at runtime (container crash-looping). The next automatic Docker restart
+    picks up the re-pointed symlink on its own.
+    """
+    if not _is_admin(connection):
+        connection.send_error(msg["id"], "unauthorized", "admin required")
+        return
+    base = _base_dir(hass)
+    entry = base / APP_LAST_DIR_REL / APP_ENTRY_FILE
+    if not await hass.async_add_executor_job(entry.exists):
+        connection.send_result(msg["id"], {"success": False, "reason": "No previous build to roll back to."})
+        return
+
+    target = f"{CONTAINER_DATA_ROOT}/{APP_LAST_DIR_REL}/{APP_ENTRY_FILE}"
+    await hass.async_add_executor_job(_point_active_assembly, base, target)
+    connection.send_result(msg["id"], {"success": True})
 
 
 @websocket_api.websocket_command({vol.Required("type"): "netdaemon_toolkit/reload"})
@@ -622,6 +811,9 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_reload)
     websocket_api.async_register_command(hass, ws_logs)
     websocket_api.async_register_command(hass, ws_codegen)
+    websocket_api.async_register_command(hass, ws_rebuild)
+    websocket_api.async_register_command(hass, ws_switch_mode)
+    websocket_api.async_register_command(hass, ws_rollback)
     websocket_api.async_register_command(hass, ws_traces)
     websocket_api.async_register_command(hass, ws_list)
     websocket_api.async_register_command(hass, ws_read)

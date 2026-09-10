@@ -57,6 +57,19 @@ const I18N = {
     reloadConfirm: "Reload NetDaemon? The code is recompiled; automations pause briefly.",
     reloadRunning: "Reloading NetDaemon …", reloadDone: "NetDaemon reload triggered.",
     reloadFail: "Reload failed: ",
+    btnRebuild: "⚙ Rebuild", t_rebuild: "Build the compiled host from source and switch to it on success",
+    rebuildConfirm: "Rebuild the compiled host from source?\nA failed build leaves the current version running; this can take a while on the first run (installs the .NET SDK).",
+    rebuildRunning: "Building … this can take a while, especially the first time",
+    rebuildDone: "Build succeeded, switched to the new version.",
+    rebuildFail: "Build failed: ",
+    modeSource: "Source", modeCompiled: "Compiled",
+    t_switchSource: "Currently compiled — click to switch to the source-deployed version",
+    t_switchCompiled: "Currently source-deployed — click to switch to the compiled build",
+    switchRunning: "Switching …", switchDone: "Switched.", switchFail: "Switch failed: ",
+    btnRollback: "↺ Rollback", t_rollback: "Switch back to the build that preceded the current one",
+    rollbackConfirm: "Roll back to the previous build?",
+    rollbackRunning: "Rolling back …", rollbackDone: "Rolled back. Reload to apply.",
+    rollbackFail: "Rollback failed: ",
     discard: "Discard unsaved changes?",
     noFiles: "No .cs files found.", noMatches: "No matches.",
     showAll: "Show all files", t_showAll: "Show and edit every file under this directory, not just .cs",
@@ -123,6 +136,19 @@ const I18N = {
     reloadConfirm: "NetDaemon neu laden? Der Code wird neu kompiliert; die Automationen pausieren kurz.",
     reloadRunning: "NetDaemon wird neu geladen …", reloadDone: "NetDaemon-Reload ausgelöst.",
     reloadFail: "Reload fehlgeschlagen: ",
+    btnRebuild: "⚙ Neu bauen", t_rebuild: "Den kompilierten Host aus dem Quellcode neu bauen und bei Erfolg umschalten",
+    rebuildConfirm: "Kompilierten Host aus dem Quellcode neu bauen?\nEin fehlgeschlagener Build lässt die aktuelle Version einfach weiterlaufen; kann beim ersten Mal dauern (installiert das .NET SDK).",
+    rebuildRunning: "Wird gebaut … kann dauern, besonders beim ersten Mal",
+    rebuildDone: "Build erfolgreich, auf die neue Version umgeschaltet.",
+    rebuildFail: "Build fehlgeschlagen: ",
+    modeSource: "Source", modeCompiled: "Compiled",
+    t_switchSource: "Aktuell kompiliert — zum Umschalten auf die Source-Deploy-Version klicken",
+    t_switchCompiled: "Aktuell Source-Deploy — zum Umschalten auf den kompilierten Build klicken",
+    switchRunning: "Wird umgeschaltet …", switchDone: "Umgeschaltet.", switchFail: "Umschalten fehlgeschlagen: ",
+    btnRollback: "↺ Rollback", t_rollback: "Zurück auf den Build vor dem aktuellen wechseln",
+    rollbackConfirm: "Auf den vorherigen Build zurückwechseln?",
+    rollbackRunning: "Rollback läuft …", rollbackDone: "Zurückgesetzt. Zum Übernehmen neu laden.",
+    rollbackFail: "Rollback fehlgeschlagen: ",
     discard: "Ungespeicherte Änderungen verwerfen?",
     noFiles: "Keine .cs-Dateien gefunden.", noMatches: "Keine Treffer.",
     showAll: "Alle Dateien zeigen", t_showAll: "Jede Datei in diesem Verzeichnis anzeigen und bearbeiten, nicht nur .cs",
@@ -1390,9 +1416,86 @@ class NetDaemonToolkitPanel extends HTMLElement {
         this._ndRt.title =
           r.ts == null ? this._t("stTitleNoFile") : this._t("stTitleStale", { n: r.age });
       }
+      // The Source/Compiled switch is a single sliding pill (like the per-app enable toggles),
+      // always visible -- a "switch for the curious" -- but only does something once the
+      // one-time docker-compose.yml edit has been made; clicking it before that gives a clear
+      // error instead of silently writing an inert symlink (see ws_switch_mode). Its position
+      // follows r.current_mode, read straight off the symlink ("source"/"compiled", "source" also
+      // before setup -- see websocket.py's _read_current_mode). Rebuild/Rollback only show once
+      // build_mode is confirmed ready -- no point offering an action that can't work.
+      this._buildBar.hidden = false;
+      const busy = !!(this._rebuildBusy || this._switchBusy || this._rollbackBusy);
+      const compiled = r.current_mode === "compiled";
+      this._switchEl.classList.toggle("on", compiled);
+      this._switchEl.classList.toggle("busy", busy);
+      this._switchEl.dataset.targetMode = compiled ? "source" : "compiled";
+      this._switchEl.title = compiled ? this._t("t_switchSource") : this._t("t_switchCompiled");
+      this._modeLabelSourceEl.classList.toggle("active", !compiled);
+      this._modeLabelCompiledEl.classList.toggle("active", compiled);
+      this._rebuildBtn.hidden = !r.compiled_build_ready;
+      this._rebuildBtn.disabled = busy;
+      this._rollbackBtn.hidden = !r.compiled_build_ready;
+      this._rollbackBtn.disabled = busy;
     } catch (e) {
       /* ignore transient errors */
     }
+  }
+
+  async _rebuild() {
+    if (this._rebuildBusy) return;
+    if (!window.confirm(this._t("rebuildConfirm"))) return;
+    this._rebuildBusy = true;
+    this._rebuildBtn.disabled = true;
+    this._setInfo(this._t("rebuildRunning"));
+    try {
+      const r = await this._ws({ type: "netdaemon_toolkit/rebuild" });
+      if (r.success) {
+        this._setInfo(this._t("rebuildDone"));
+      } else {
+        this._setInfo(this._t("rebuildFail") + (r.reason || r.log || ""), true);
+      }
+    } catch (e) {
+      this._setInfo(this._t("rebuildFail") + (e.message || e), true);
+    }
+    this._rebuildBusy = false;
+    this._rebuildBtn.disabled = false;
+  }
+
+  async _switchMode(mode) {
+    if (this._switchBusy) return;
+    this._switchBusy = true;
+    this._setInfo(this._t("switchRunning"));
+    try {
+      const r = await this._ws({ type: "netdaemon_toolkit/switch_mode", mode });
+      if (r.success) {
+        this._setInfo(this._t("switchDone"));
+        let tries = 0;
+        const iv = setInterval(() => {
+          tries++;
+          this._pollStatus();
+          if (tries >= 8) clearInterval(iv);
+        }, 2000);
+      } else {
+        this._setInfo(this._t("switchFail") + (r.reason || ""), true);
+      }
+    } catch (e) {
+      this._setInfo(this._t("switchFail") + (e.message || e), true);
+    }
+    this._switchBusy = false;
+  }
+
+  async _rollback() {
+    if (this._rollbackBusy) return;
+    if (!window.confirm(this._t("rollbackConfirm"))) return;
+    this._rollbackBusy = true;
+    this._setInfo(this._t("rollbackRunning"));
+    try {
+      const r = await this._ws({ type: "netdaemon_toolkit/rollback" });
+      this._setInfo(r.success ? this._t("rollbackDone") : this._t("rollbackFail") + (r.reason || ""), !r.success);
+    } catch (e) {
+      this._setInfo(this._t("rollbackFail") + (e.message || e), true);
+    }
+    this._rollbackBusy = false;
   }
 
   // ── resizable splitter ─────────────────────────────────────────────────
@@ -1450,6 +1553,15 @@ class NetDaemonToolkitPanel extends HTMLElement {
                  border:1px solid var(--divider-color,#444); white-space:nowrap; }
         .nd-rt.ok  { color:#3fb96a; background:rgba(63,185,106,.14); border-color:rgba(63,185,106,.45); }
         .nd-rt.bad { color:#ff6b6b; background:rgba(255,107,107,.14); border-color:rgba(255,107,107,.5); }
+        .nd-buildbar { display:flex; align-items:center; gap:8px; }
+        .nd-buildbar[hidden] { display:none; }
+        .nd-mode-switch { display:flex; align-items:center; gap:8px; margin-right:16px;
+                          padding-right:16px; border-right:1px solid rgba(255,255,255,.25); }
+        .nd-mode-label { font-size:12px; font-weight:600; opacity:.7; }
+        .nd-mode-label.active { opacity:1; }
+        .nd-switch.app-toggle { background:var(--primary-color); }
+        .nd-switch.app-toggle::after { background:#fff; }
+        .nd-switch.busy { opacity:.5; cursor:default; }
         .nd-body { display:flex; flex:1; min-height:0; }
         .nd-left { width:280px; flex:none; display:flex; flex-direction:column; min-height:0; }
         .nd-dir { font-size:11px; opacity:.7; padding:8px; word-break:break-all;
@@ -1619,6 +1731,15 @@ class NetDaemonToolkitPanel extends HTMLElement {
         <div class="nd-bar">
           <span class="title">NetDaemon Toolkit</span>
           <div class="nd-right">
+            <div class="nd-mode-switch">
+              <span class="nd-mode-label" data-mode="source">${t("modeSource")}</span>
+              <span class="nd-switch app-toggle"></span>
+              <span class="nd-mode-label" data-mode="compiled">${t("modeCompiled")}</span>
+            </div>
+            <div class="nd-buildbar" hidden>
+              <button class="action nd-rollback" title="${t("t_rollback")}" hidden>${t("btnRollback")}</button>
+              <button class="action nd-rebuild" title="${t("t_rebuild")}">${t("btnRebuild")}</button>
+            </div>
             <button class="action nd-logs" title="${t("t_logs")}">${t("btnLogs")}</button>
             <button class="action nd-reload" title="${t("t_reload")}">${t("btnReload")}</button>
             <span class="nd-rt">${t("statusLoading")}</span>
@@ -1716,6 +1837,23 @@ class NetDaemonToolkitPanel extends HTMLElement {
     });
     this.querySelector(".nd-reload").addEventListener("click", () => this._reloadNetDaemon());
     this._saveBtn.addEventListener("click", () => this._save());
+
+    // Mode switch -- a single sliding pill, always visible (a "switch for the curious"), sitting
+    // before the other buttons with its own separator. Rebuild/Rollback (in .nd-buildbar) stay
+    // hidden until _pollStatus sees compiled_build_ready. See _pollStatus for how the switch's
+    // position/labels follow the currently active mode.
+    this._switchEl = this.querySelector(".nd-switch");
+    this._modeLabelSourceEl = this.querySelector('.nd-mode-label[data-mode="source"]');
+    this._modeLabelCompiledEl = this.querySelector('.nd-mode-label[data-mode="compiled"]');
+    this._switchEl.addEventListener("click", () => {
+      if (this._switchEl.classList.contains("busy")) return;
+      this._switchMode(this._switchEl.dataset.targetMode);
+    });
+    this._buildBar = this.querySelector(".nd-buildbar");
+    this._rollbackBtn = this.querySelector(".nd-rollback");
+    this._rebuildBtn = this.querySelector(".nd-rebuild");
+    this._rebuildBtn.addEventListener("click", () => this._rebuild());
+    this._rollbackBtn.addEventListener("click", () => this._rollback());
 
     // Logs overlay.
     this._logsOverlay = this.querySelector(".nd-logs-overlay");

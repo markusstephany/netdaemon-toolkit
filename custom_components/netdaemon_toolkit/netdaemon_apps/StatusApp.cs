@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Reactive.Linq;
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using NetDaemon.AppModel;
 
@@ -12,6 +13,11 @@ namespace HaNetDaemon.Apps.Toolkit;
 /// source fails to compile, NO app runs (not even this one), the file goes
 /// stale, and the panel turns red — exactly the "did my last edit break it?"
 /// signal. Portable: just a file in the shared data folder, no Docker needed.
+///
+/// Also reports the raw NetDaemon__ApplicationAssembly env var: lets the panel
+/// tell a user who has enabled build_mode but not yet done the one-time
+/// docker-compose.yml edit that switch/rebuild actions won't take visible
+/// effect yet.
 /// </summary>
 [NetDaemonApp]
 public class StatusApp
@@ -35,7 +41,8 @@ public class StatusApp
         try
         {
             var ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            File.WriteAllText(StatusFile, $"{{\"ts\":{ts}}}");
+            var applicationAssembly = Environment.GetEnvironmentVariable("NetDaemon__ApplicationAssembly");
+            File.WriteAllText(StatusFile, JsonSerializer.Serialize(new { ts, applicationAssembly }));
         }
         catch (Exception ex)
         {
