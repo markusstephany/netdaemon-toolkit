@@ -6,6 +6,7 @@ in a configured directory (default /config/netdaemon). Pairs with NetDaemon
 running in source-deploy mode.
 """
 import logging
+import os
 from datetime import timedelta
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.loader import async_get_integration
 
 from .const import (
+    ACTIVE_ASSEMBLY_REL,
     CONF_DIRECTORY,
     CONF_WEBHOOK_RELAYS,
     DEFAULT_DIRECTORY,
@@ -26,6 +28,7 @@ from .const import (
     PANEL_ICON,
     PANEL_TITLE,
     PANEL_URL,
+    SOURCE_HOST_ASSEMBLY,
     STATIC_URL,
     TOOLKIT_APPS_FILES,
     TOOLKIT_APPS_REL,
@@ -115,6 +118,40 @@ async def _ensure_generated_placeholder(hass: HomeAssistant, directory: str) -> 
     await hass.async_add_executor_job(_do)
 
 
+async def _ensure_active_assembly_symlink(hass: HomeAssistant, directory: str) -> None:
+    """Create the ActiveAssemblyPath symlink (pointing at the vendor's own source-deploy host)
+    if it doesn't exist yet -- idempotent, same "only if missing" idiom as _ensure_toolkit_apps.
+
+    This has to happen long before anyone ever points NetDaemon__ApplicationAssembly at it: the
+    netdaemon6 image's run script execs that path directly once the env var is set, with no
+    fallback -- if the symlink doesn't already exist by then, the container fails to start. Doing
+    it here means the one-time docker-compose.yml edit (see const.py) is always safe to make,
+    whenever someone gets to it, since the symlink has quietly existed since first setup.
+
+    Also creates a plain (non-symlink) appsettings.json right next to it, in `directory` itself --
+    live-verified 2026-09-10: the run script's `cd "$(dirname "$NetDaemon__ApplicationAssembly")"`
+    is a pure string operation on the *configured* path, not the symlink's resolved target, so the
+    working directory always ends up as `directory` (e.g. /data) regardless of which real file the
+    symlink points at. .NET's Generic Host requires appsettings.json to exist in the working
+    directory and crashes (FileNotFoundException) otherwise -- happens for BOTH modes, since both
+    are reached through the same fixed, symlinked path. A symlink to the vendor's own
+    /daemon/appsettings.json was considered and rejected: this file has to be readable from
+    *outside* /daemon too (a compiled build's own working directory is also `directory`), so it
+    needs to be a real file here either way -- may as well be one from the start."""
+    link = Path(directory) / ACTIVE_ASSEMBLY_REL
+    appsettings = Path(directory) / "appsettings.json"
+
+    def _do() -> None:
+        if not (link.exists() or link.is_symlink()):
+            os.symlink(SOURCE_HOST_ASSEMBLY, link)
+            _LOGGER.info("Created %s -> %s", link, SOURCE_HOST_ASSEMBLY)
+        if not appsettings.exists():
+            appsettings.write_text('{ "NetDaemon": { "ApplicationConfigurationFolder": "/data" } }\n', encoding="utf-8")
+            _LOGGER.info("Created %s", appsettings)
+
+    await hass.async_add_executor_job(_do)
+
+
 def _reconcile_webhook_relays(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Register the currently-configured webhook relays, unregistering
     whatever this integration registered last time first. Runs on every
@@ -135,6 +172,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     directory = entry.data.get(CONF_DIRECTORY, DEFAULT_DIRECTORY)
     first_install = await _ensure_toolkit_apps(hass, directory)
     await _ensure_generated_placeholder(hass, directory)
+    await _ensure_active_assembly_symlink(hass, directory)
 
     if first_install:
         title, message = _first_restart_notification_text(hass, directory)

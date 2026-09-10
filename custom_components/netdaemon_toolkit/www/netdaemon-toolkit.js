@@ -55,10 +55,12 @@ const I18N = {
     stTitleNoFile: "No heartbeat file — is the StatusApp running?",
     stTitleStale: "Last heartbeat {n}s ago (compile error or stopped?)",
     reloadConfirm: "Reload NetDaemon? The code is recompiled; automations pause briefly.",
+    reloadConfirmCompiled: "Restart NetDaemon? This just restarts the already-built version (use Rebuild to compile new changes); automations pause briefly.",
     reloadRunning: "Reloading NetDaemon …", reloadDone: "NetDaemon reload triggered.",
     reloadFail: "Reload failed: ",
     btnRebuild: "⚙ Rebuild", t_rebuild: "Build the compiled host from source and switch to it on success",
     rebuildConfirm: "Rebuild the compiled host from source?\nA failed build leaves the current version running; this can take a while on the first run (installs the .NET SDK).",
+    rebuildConfirmSource: "Build a compiled host from apps/ and switch to it once done?\nCurrently running in source mode; a failed build changes nothing, source keeps running. Can take a while on the first run (installs the .NET SDK).",
     rebuildRunning: "Building … this can take a while, especially the first time",
     rebuildDone: "Build succeeded, switched to the new version.",
     rebuildFail: "Build failed: ",
@@ -134,10 +136,12 @@ const I18N = {
     stTitleNoFile: "Keine Heartbeat-Datei — läuft die StatusApp?",
     stTitleStale: "Letztes Lebenszeichen vor {n} s (Compile-Fehler oder gestoppt?)",
     reloadConfirm: "NetDaemon neu laden? Der Code wird neu kompiliert; die Automationen pausieren kurz.",
+    reloadConfirmCompiled: "NetDaemon neu starten? Das startet nur die schon gebaute Version neu (für neuen Code erst \"Neu bauen\" nutzen); die Automationen pausieren kurz.",
     reloadRunning: "NetDaemon wird neu geladen …", reloadDone: "NetDaemon-Reload ausgelöst.",
     reloadFail: "Reload fehlgeschlagen: ",
     btnRebuild: "⚙ Neu bauen", t_rebuild: "Den kompilierten Host aus dem Quellcode neu bauen und bei Erfolg umschalten",
     rebuildConfirm: "Kompilierten Host aus dem Quellcode neu bauen?\nEin fehlgeschlagener Build lässt die aktuelle Version einfach weiterlaufen; kann beim ersten Mal dauern (installiert das .NET SDK).",
+    rebuildConfirmSource: "Kompilierten Host aus apps/ bauen und danach umschalten?\nLäuft gerade im Source-Modus; ein fehlgeschlagener Build ändert nichts, Source läuft einfach weiter. Kann beim ersten Mal dauern (installiert das .NET SDK).",
     rebuildRunning: "Wird gebaut … kann dauern, besonders beim ersten Mal",
     rebuildDone: "Build erfolgreich, auf die neue Version umgeschaltet.",
     rebuildFail: "Build fehlgeschlagen: ",
@@ -1162,7 +1166,8 @@ class NetDaemonToolkitPanel extends HTMLElement {
   }
 
   async _reloadNetDaemon() {
-    if (!window.confirm(this._t("reloadConfirm"))) return;
+    const confirmKey = this._currentMode === "compiled" ? "reloadConfirmCompiled" : "reloadConfirm";
+    if (!window.confirm(this._t(confirmKey))) return;
     const btn = this.querySelector(".nd-reload");
     btn.disabled = true;
     this._setInfo(this._t("reloadRunning"));
@@ -1426,6 +1431,7 @@ class NetDaemonToolkitPanel extends HTMLElement {
       this._buildBar.hidden = false;
       const busy = !!(this._rebuildBusy || this._switchBusy || this._rollbackBusy);
       const compiled = r.current_mode === "compiled";
+      this._currentMode = r.current_mode;
       this._switchEl.classList.toggle("on", compiled);
       this._switchEl.classList.toggle("busy", busy);
       this._switchEl.dataset.targetMode = compiled ? "source" : "compiled";
@@ -1434,7 +1440,7 @@ class NetDaemonToolkitPanel extends HTMLElement {
       this._modeLabelCompiledEl.classList.toggle("active", compiled);
       this._rebuildBtn.hidden = !r.compiled_build_ready;
       this._rebuildBtn.disabled = busy;
-      this._rollbackBtn.hidden = !r.compiled_build_ready;
+      this._rollbackBtn.hidden = !(r.compiled_build_ready && compiled);
       this._rollbackBtn.disabled = busy;
     } catch (e) {
       /* ignore transient errors */
@@ -1443,7 +1449,8 @@ class NetDaemonToolkitPanel extends HTMLElement {
 
   async _rebuild() {
     if (this._rebuildBusy) return;
-    if (!window.confirm(this._t("rebuildConfirm"))) return;
+    const confirmKey = this._currentMode === "compiled" ? "rebuildConfirm" : "rebuildConfirmSource";
+    if (!window.confirm(this._t(confirmKey))) return;
     this._rebuildBusy = true;
     this._rebuildBtn.disabled = true;
     this._setInfo(this._t("rebuildRunning"));
@@ -1559,7 +1566,7 @@ class NetDaemonToolkitPanel extends HTMLElement {
                           padding-right:16px; border-right:1px solid rgba(255,255,255,.25); }
         .nd-mode-label { font-size:12px; font-weight:600; opacity:.7; }
         .nd-mode-label.active { opacity:1; }
-        .nd-switch.app-toggle { background:var(--primary-color); }
+        .nd-switch.app-toggle, .nd-switch.app-toggle.on { background:var(--primary-color); }
         .nd-switch.app-toggle::after { background:#fff; }
         .nd-switch.busy { opacity:.5; cursor:default; }
         .nd-body { display:flex; flex:1; min-height:0; }

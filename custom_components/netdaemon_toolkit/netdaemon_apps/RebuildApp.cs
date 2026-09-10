@@ -146,6 +146,7 @@ public class RebuildApp
             using Microsoft.Extensions.Hosting;
             using NetDaemon.AppModel;
             using NetDaemon.Extensions.Logging;
+            using NetDaemon.Extensions.Scheduler;
             using NetDaemon.Runtime;
 
             await Host.CreateDefaultBuilder(args)
