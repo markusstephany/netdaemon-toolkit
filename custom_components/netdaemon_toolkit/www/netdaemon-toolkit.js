@@ -1263,10 +1263,16 @@ class NetDaemonToolkitPanel extends HTMLElement {
   }
 
   async _reloadNetDaemon() {
+    // Rebuild/Rollback/the mode switch all end with NetDaemon relaunching one way or another --
+    // a plain Reload racing one of those mid-flight could restart into a half-promoted build (a
+    // Rebuild that's between writing app-next/ and promoting it) or a half-swapped Rollback.
+    // Share one busy flag with them (see _pollStatus, which disables this button the same way it
+    // already disables theirs) instead of this button guarding only against itself.
+    if (this._rebuildBusy || this._switchBusy || this._rollbackBusy || this._reloadBusy) return;
     const confirmKey = this._currentMode === "compiled" ? "reloadConfirmCompiled" : "reloadConfirm";
     if (!window.confirm(this._t(confirmKey))) return;
-    const btn = this.querySelector(".nd-reload");
-    btn.disabled = true;
+    this._reloadBusy = true;
+    this._reloadBtn.disabled = true;
     this._setInfo(this._t("reloadRunning"));
     try {
       await this._ws({ type: "netdaemon_toolkit/reload" });
@@ -1276,12 +1282,14 @@ class NetDaemonToolkitPanel extends HTMLElement {
         this._pollStatus();
         if (tries >= 8) {
           clearInterval(iv);
-          btn.disabled = false;
+          this._reloadBusy = false;
+          this._reloadBtn.disabled = false;
           this._setInfo(this._t("reloadDone"));
         }
       }, 2000);
     } catch (e) {
-      btn.disabled = false;
+      this._reloadBusy = false;
+      this._reloadBtn.disabled = false;
       this._setInfo(this._t("reloadFail") + (e.message || e), true);
     }
   }
@@ -1537,7 +1545,10 @@ class NetDaemonToolkitPanel extends HTMLElement {
       // before setup -- see websocket.py's _read_current_mode). Rebuild/Rollback only show once
       // build_mode is confirmed ready -- no point offering an action that can't work.
       this._buildBar.hidden = false;
-      const busy = !!(this._rebuildBusy || this._switchBusy || this._rollbackBusy);
+      // One shared "some toolkit action that ends in NetDaemon relaunching is in flight" flag --
+      // Reload included, see its own doc comment for why it can't safely race Rebuild/Rollback/
+      // the mode switch either.
+      const busy = !!(this._rebuildBusy || this._switchBusy || this._rollbackBusy || this._reloadBusy);
       const compiled = r.current_mode === "compiled";
       this._currentMode = r.current_mode;
       this._switchEl.classList.toggle("on", compiled);
@@ -1550,13 +1561,14 @@ class NetDaemonToolkitPanel extends HTMLElement {
       this._rebuildBtn.disabled = busy;
       this._rollbackBtn.hidden = !(r.compiled_build_ready && compiled);
       this._rollbackBtn.disabled = busy;
+      this._reloadBtn.disabled = busy;
     } catch (e) {
       /* ignore transient errors */
     }
   }
 
   async _rebuild() {
-    if (this._rebuildBusy) return;
+    if (this._rebuildBusy || this._switchBusy || this._rollbackBusy || this._reloadBusy) return;
     const confirmKey = this._currentMode === "compiled" ? "rebuildConfirm" : "rebuildConfirmSource";
     if (!window.confirm(this._t(confirmKey))) return;
     this._rebuildBusy = true;
@@ -1577,7 +1589,7 @@ class NetDaemonToolkitPanel extends HTMLElement {
   }
 
   async _switchMode(mode) {
-    if (this._switchBusy) return;
+    if (this._rebuildBusy || this._switchBusy || this._rollbackBusy || this._reloadBusy) return;
     this._switchBusy = true;
     this._setInfo(this._t("switchRunning"));
     try {
@@ -1600,7 +1612,7 @@ class NetDaemonToolkitPanel extends HTMLElement {
   }
 
   async _rollback() {
-    if (this._rollbackBusy) return;
+    if (this._rebuildBusy || this._switchBusy || this._rollbackBusy || this._reloadBusy) return;
     if (!window.confirm(this._t("rollbackConfirm"))) return;
     this._rollbackBusy = true;
     this._setInfo(this._t("rollbackRunning"));
@@ -1950,7 +1962,8 @@ class NetDaemonToolkitPanel extends HTMLElement {
       window.localStorage.setItem(SHOW_ALL_KEY, this._showAll ? "1" : "0");
       this._loadFiles();
     });
-    this.querySelector(".nd-reload").addEventListener("click", () => this._reloadNetDaemon());
+    this._reloadBtn = this.querySelector(".nd-reload");
+    this._reloadBtn.addEventListener("click", () => this._reloadNetDaemon());
     this._saveBtn.addEventListener("click", () => this._save());
 
     // Mode switch -- a single sliding pill, always visible (a "switch for the curious"), sitting
