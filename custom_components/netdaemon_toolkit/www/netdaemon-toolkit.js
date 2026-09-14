@@ -818,30 +818,37 @@ class NetDaemonToolkitPanel extends HTMLElement {
       return;
     }
     const tree = this._buildTree();
+    // The configured directory is the PARENT of NetDaemon's own apps/ folder (every domain lives
+    // at apps/<Domain>/ -- see TOOLKIT_APPS_REL/GENERATED_REL in the integration's own const.py,
+    // which both hardcode that same "apps/" prefix), so apps/ itself is a real, visible folder
+    // row in this tree, sibling to nd-active.dll and friends. None of toggle/trace/regenerate
+    // promotion may ever land ON it -- it holds every domain at once, never uniquely "the one
+    // folder for this app" the way each domain folder inside it is.
+    const appsRoot = (tree.dirs && tree.dirs["apps"]) || tree;
     // Trace keys are registered per DOMAIN (Source/'s own App constant, e.g. "backup-watch"),
     // not derived from any single file's name -- match top-level apps/<Domain>/ folders by that
     // convention first (see _domainTraceFolders), and fall back to the old per-file slug match
     // below for anything it doesn't cover (a flat apps/X/XApp.cs layout, where the trace key
     // historically *was* the file's own slug).
     const { promotions: domainTracePromotions, covered: domainTraceCovered } =
-      this._domainTraceFolders(tree);
+      this._domainTraceFolders(appsRoot);
     // A domain's [NetDaemonApp] class can live directly in its folder (a flat apps/X/XApp.cs
     // layout) or several layers deep (Source/'s apps/X/Logic/Business/XAdapter.cs) -- either way
-    // the toggle/regenerate button belongs on the OUTERMOST folder whose subtree still contains
-    // exactly one match, so the whole domain folder acts as the one place to control it, not
-    // whichever subfolder the file happens to sit in.
+    // the toggle/regenerate button belongs on the OUTERMOST folder *within apps/* whose subtree
+    // still contains exactly one match, so the whole domain folder acts as the one place to
+    // control it, not whichever subfolder the file happens to sit in.
     this._promoted = {
-      toggle: this._promoteSingleMatches(tree, (f) => {
+      toggle: this._promoteSingleMatches(appsRoot, (f) => {
         const slug = fileSlug(f.name);
         const id = (this._appToggleEntities || []).find((tid) => tid.endsWith("_" + slug));
         return id ? { file: f, id } : null;
       }),
-      trace: this._promoteSingleMatches(tree, (f) => {
+      trace: this._promoteSingleMatches(appsRoot, (f) => {
         if (domainTraceCovered.has(f.path)) return null; // already handled at the domain level
         const slug = fileSlug(f.name);
         return this._traceApps && this._traceApps.has(slug) ? { file: f, slug } : null;
       }),
-      gen: this._promoteSingleMatches(tree, (f) => (isGenerated(f.path) ? { file: f } : null)),
+      gen: this._promoteSingleMatches(appsRoot, (f) => (isGenerated(f.path) ? { file: f } : null)),
     };
     this._domainTracePromotions = domainTracePromotions;
     this._renderNode(tree, 0, this._list);
