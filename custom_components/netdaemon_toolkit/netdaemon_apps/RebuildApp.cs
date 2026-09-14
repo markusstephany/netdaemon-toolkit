@@ -32,9 +32,11 @@ namespace HaNetDaemon.Apps.Toolkit;
 /// websocket.py's _compiled_build_ready.
 ///
 /// Runtime failures after a successful build (the new version compiles fine but doesn't come up)
-/// are NOT this app's problem to solve -- see the panel's separate rollback action, which
-/// re-points the symlink at app-last directly on the shared volume and therefore works even while
-/// this container is crash-looping.
+/// are NOT this app's problem to solve -- see the panel's separate rollback action, which swaps
+/// AppDir and AppLastDir in place directly on the shared volume (not a symlink re-point -- that
+/// would leave AppDir holding the bad build, which the next Rebuild here would retire into
+/// AppLastDir, destroying the build just rolled back to) and therefore works even while this
+/// container is crash-looping.
 /// </summary>
 [NetDaemonApp]
 public class RebuildApp

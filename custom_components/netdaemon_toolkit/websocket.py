@@ -180,7 +180,8 @@ def _read_current_mode(base: Path) -> str | None:
     exists and points at our own build; "source" both when it points at the vendor's own host AND
     when the symlink doesn't exist at all yet (NetDaemon__ApplicationAssembly unset entirely is
     functionally the same source-deploy path, just via the run script's other branch -- see
-    const.py). None only for a genuinely unexpected target, e.g. app-last during a manual rollback."""
+    const.py). None only for a genuinely unexpected target -- should no longer happen for rollback
+    since that now swaps app/<->app-last/ in place rather than pointing the symlink at app-last."""
     try:
         target = os.readlink(base / ACTIVE_ASSEMBLY_REL)
     except OSError:
@@ -597,21 +598,37 @@ async def ws_switch_mode(hass, connection, msg):
 async def ws_rollback(hass, connection, msg):
     """Roll back to the last build that preceded the currently active one (needs the compiled-build symlink set up, see const.py).
 
-    Pure symlink re-point, same as ws_switch_mode -- deliberately independent of the running
-    container's cooperation, since the whole point is recovering from a build that compiled fine
-    but doesn't come up at runtime (container crash-looping). The next automatic Docker restart
-    picks up the re-pointed symlink on its own.
+    Swaps app/ and app-last/ in place (three renames through a temp name) rather than pointing the
+    ActiveAssemblyPath symlink at app-last/ directly. A symlink re-point would leave app/ holding
+    the bad build while RebuildApp always retires *app/* into app-last/ on the next Rebuild -- so a
+    second Rebuild after a rollback would destroy the very build just rolled back to. Swapping
+    keeps app/ meaning "the build that's active" and app-last/ meaning "the one before it", which
+    is RebuildApp's own invariant, so a later Rebuild can't clobber it and the symlink never needs
+    a third target -- deliberately still independent of the running container's cooperation, since
+    the whole point is recovering from a build that compiled fine but doesn't come up at runtime
+    (container crash-looping). The next automatic Docker restart picks up the swap on its own.
     """
     if not _is_admin(connection):
         connection.send_error(msg["id"], "unauthorized", "admin required")
         return
     base = _base_dir(hass)
-    entry = base / APP_LAST_DIR_REL / APP_ENTRY_FILE
+    app_dir = base / APP_DIR_REL
+    app_last_dir = base / APP_LAST_DIR_REL
+    entry = app_last_dir / APP_ENTRY_FILE
     if not await hass.async_add_executor_job(entry.exists):
         connection.send_result(msg["id"], {"success": False, "reason": "No previous build to roll back to."})
         return
 
-    target = f"{CONTAINER_DATA_ROOT}/{APP_LAST_DIR_REL}/{APP_ENTRY_FILE}"
+    def _swap():
+        tmp = base / f"{APP_DIR_REL}-rollback-tmp"
+        if tmp.exists():
+            shutil.rmtree(tmp)
+        app_dir.rename(tmp)
+        app_last_dir.rename(app_dir)
+        tmp.rename(app_last_dir)
+
+    await hass.async_add_executor_job(_swap)
+    target = f"{CONTAINER_DATA_ROOT}/{APP_DIR_REL}/{APP_ENTRY_FILE}"
     await hass.async_add_executor_job(_point_active_assembly, base, target)
     connection.send_result(msg["id"], {"success": True})
 
