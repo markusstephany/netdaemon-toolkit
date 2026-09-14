@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Compiles ControlApp/StatusApp/CodegenApp/RebuildApp/ToolkitInitializer, the exact same files
+    the source-deploy path copies into apps/_toolkit as loose .cs, into one assembly for the
+    compiled-build path. Default SDK globbing picks up every .cs file in this same folder, so
+    nothing else needs listing here. Only ever referenced conditionally, via Service.csproj's
+    ToolkitProjectPath-gated ProjectReference; a plain generated-wrapper build (loose apps/ folder,
+    no existing solution) never touches this file at all, it lists this same folder's .cs files
+    directly instead.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>HaNetDaemon.Toolkit</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.7" />
+    <PackageReference Include="NetDaemon.AppModel" Version="26.21.0" />
+    <PackageReference Include="NetDaemon.HassModel" Version="26.21.0" />
+  </ItemGroup>
+
+</Project>

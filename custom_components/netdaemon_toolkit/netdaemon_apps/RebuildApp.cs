@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Reactive.Linq;
 using System.Text.Json;
 using System.Threading;
@@ -13,11 +14,15 @@ namespace HaNetDaemon.Apps.Toolkit;
 /// <summary>
 /// Builds the SAME apps/ tree as a real, full-SDK-compiled NetDaemon host, instead of relying on
 /// NetDaemon's own narrower source-deploy compiler -- full NuGet access, no reflection workarounds
-/// needed in the resulting build. Generates a throwaway wrapper project (Program.cs + .csproj) in
-/// an empty temp directory that glob-includes AppsDir, builds it via `dotnet build` (subprocess,
-/// same ReflectedProcess idiom as CodegenApp, for the same reason -- see its own doc comment), and
-/// on success promotes the result and re-points ActiveAssemblyPath at it before exiting so the
-/// container relaunches through the newly-pointed symlink.
+/// needed in the resulting build. Two shapes of apps/ are supported, detected by FindSolutionProject:
+/// a flat folder of loose .cs files (today's proven case) gets a throwaway wrapper project
+/// (Program.cs + .csproj) generated into an empty temp directory that glob-includes AppsDir; an
+/// existing multi-project solution (exactly one .csproj under AppsDir with OutputType Exe) gets
+/// built directly, with -p:ToolkitProjectPath wiring the toolkit apps into it via that project's own
+/// conditional ProjectReference (see Service.csproj in such a solution). Either way, the build runs
+/// via `dotnet build` (subprocess, same ReflectedProcess idiom as CodegenApp, for the same reason --
+/// see its own doc comment), and on success the result is promoted and ActiveAssemblyPath re-pointed
+/// at it before exiting so the container relaunches through the newly-pointed symlink.
 ///
 /// A failed build never touches the running deployment or the symlink: it builds into a scratch
 /// directory first (AppNextDir) and only promotes that once `dotnet build` has actually succeeded.
@@ -43,6 +48,7 @@ public class RebuildApp
     private const string AppLastDir = "/data/app-last";
     private const string AppEntryFile = "Service.dll";
     private const string ResultFile = "/data/.nd_rebuild_result.json";
+    private const string ToolkitProjectFile = "/data/apps/_toolkit/Toolkit.csproj";
     private const string NetDaemonVersion = "26.21.0";
     private const int TimeoutSeconds = 300;
 
@@ -70,13 +76,29 @@ public class RebuildApp
         try
         {
             Directory.CreateDirectory(runDir);
-            WriteWrapperProject(runDir);
+
+            string buildArgsProject;
+            string[] extraArgs;
+            string? solutionError;
+            (buildArgsProject, extraArgs, solutionError) = FindSolutionProject();
+            if (solutionError != null)
+            {
+                WriteResult(new { success = false, reason = solutionError, ts = Now() });
+                return;
+            }
+
+            if (buildArgsProject == "")
+            {
+                WriteWrapperProject(runDir);
+                buildArgsProject = Path.Combine(runDir, "Service.csproj");
+                extraArgs = Array.Empty<string>();
+            }
 
             if (Directory.Exists(AppNextDir)) Directory.Delete(AppNextDir, recursive: true);
 
             var (ok, log) = await Task.Run(() => ReflectedProcess.Run(
                 "dotnet",
-                new[] { "build", Path.Combine(runDir, "Service.csproj"), "-c", "Release", "-o", AppNextDir },
+                new[] { "build", buildArgsProject, "-c", "Release", "-o", AppNextDir }.Concat(extraArgs).ToArray(),
                 runDir, TimeoutSeconds));
 
             if (!ok)
@@ -107,6 +129,30 @@ public class RebuildApp
             try { Directory.Delete(runDir, recursive: true); } catch { /* best-effort cleanup */ }
             Interlocked.Exchange(ref _running, 0);
         }
+    }
+
+    // Distinguishes "apps/ is a real, existing multi-project solution" (Source/'s eventual shape --
+    // exactly one .csproj anywhere under AppsDir with <OutputType>Exe</OutputType>, i.e. an actual
+    // host project) from "apps/ is just a flat folder of loose .cs files" (today's proven shape,
+    // verified against Source/'s real 56-project tree during design: 55 libraries, 1 Exe). Returns
+    // ("", [], null) for the flat-folder case (caller falls back to WriteWrapperProject); a found
+    // project's path plus -p:ToolkitProjectPath=... (wiring the toolkit apps into that solution the
+    // same way Service.csproj's own conditional block expects, see AppInitializer.cs) otherwise;
+    // more than one Exe project is ambiguous and reported as an error rather than guessed at.
+    private static (string project, string[] extraArgs, string? error) FindSolutionProject()
+    {
+        var exeProjects = Directory.EnumerateFiles(AppsDir, "*.csproj", SearchOption.AllDirectories)
+            .Where(f => File.ReadAllText(f).Contains("<OutputType>Exe</OutputType>"))
+            .ToList();
+
+        if (exeProjects.Count == 0) return ("", Array.Empty<string>(), null);
+
+        if (exeProjects.Count > 1)
+        {
+            return ("", Array.Empty<string>(), $"Found {exeProjects.Count} Exe projects under {AppsDir}, expected at most one: {string.Join(", ", exeProjects)}");
+        }
+
+        return (exeProjects[0], new[] { $"-p:ToolkitProjectPath={ToolkitProjectFile}" }, null);
     }
 
     // Same idiom as the reference NetDaemon3Automations-main host project: a plain top-level-

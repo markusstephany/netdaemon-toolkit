@@ -28,11 +28,22 @@ GENERATED_REL = "apps/Generated/HomeAssistantGenerated.cs"
 # forever, plus a little slack here for ws_codegen's poll loop to notice.
 CODEGEN_TIMEOUT = 180
 
-# Bundled NetDaemon apps (reload listener, status heartbeat, codegen runner)
-# get installed into this folder, relative to the configured directory, if
-# missing — see netdaemon_apps/ and _ensure_toolkit_apps() in __init__.py.
+# Bundled NetDaemon apps (reload listener, status heartbeat, codegen runner, rebuild runner) get
+# installed into this folder, relative to the configured directory, if missing — see
+# netdaemon_apps/ and _ensure_toolkit_apps() in __init__.py. Toolkit.csproj/ToolkitInitializer.cs
+# are along for the same ride even though NetDaemon's own source-deploy compiler ignores the
+# .csproj and never calls the initializer — RebuildApp needs both reachable from *inside* the
+# NetDaemon container (which only ever sees this directory, not this HACS package's own files) to
+# build a real multi-project solution with the toolkit apps wired in. See RebuildApp.cs.
 TOOLKIT_APPS_REL = "apps/_toolkit"
-TOOLKIT_APPS_FILES = ("ControlApp.cs", "StatusApp.cs", "CodegenApp.cs", "RebuildApp.cs")
+TOOLKIT_APPS_FILES = (
+    "ControlApp.cs",
+    "StatusApp.cs",
+    "CodegenApp.cs",
+    "RebuildApp.cs",
+    "ToolkitInitializer.cs",
+    "Toolkit.csproj",
+)
 
 # Compiled-build support: lets the SAME apps/ tree used for source-deploy also be built as a real,
 # full-SDK-compiled NetDaemon host (full NuGet access, no narrow-compiler workarounds) -- see
