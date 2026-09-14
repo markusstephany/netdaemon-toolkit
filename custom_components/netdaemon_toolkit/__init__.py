@@ -100,14 +100,21 @@ async def _ensure_toolkit_apps(hass: HomeAssistant, directory: str) -> bool:
 
 
 async def _ensure_generated_placeholder(hass: HomeAssistant, directory: str) -> None:
-    """Create an empty generated-entities file if none exists yet, so the
-    panel's regenerate button (attached to that file in the tree) has
-    something to attach to on a brand-new setup — before the "regenerate
-    entities" button has ever been used, that file wouldn't otherwise exist."""
+    """Create an empty generated-entities file at the historical fixed location if none exists
+    ANYWHERE yet under apps/, so the panel's regenerate button (attached to that file in the
+    tree) has something to attach to on a brand-new setup — before the "regenerate entities"
+    button has ever been used, that file wouldn't otherwise exist.
+
+    Deliberately a tree-wide search, not just a check at the fixed path: a hand-maintained
+    multi-project solution (see the Compiled builds section of docs/architecture.md) may already
+    have its own HomeAssistantGenerated.cs somewhere else entirely -- CodegenApp.cs's own
+    ResolveTarget() finds and regenerates that one in place, so creating a second, unrelated
+    placeholder at the fixed path here would just be a stale duplicate nothing ever cleans up."""
     dst = Path(directory) / GENERATED_REL
+    apps_root = Path(directory) / GENERATED_REL.split("/", 1)[0]
 
     def _do() -> None:
-        if dst.exists():
+        if any(apps_root.rglob("HomeAssistantGenerated.cs")):
             return
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_text(

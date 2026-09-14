@@ -98,10 +98,10 @@ public class RebuildApp
 
             if (Directory.Exists(AppNextDir)) Directory.Delete(AppNextDir, recursive: true);
 
-            var (ok, log) = await Task.Run(() => ReflectedProcess.Run(
+            var (ok, log) = await ReflectedProcess.RunAsync(
                 "dotnet",
                 new[] { "build", buildArgsProject, "-c", "Release", "-o", AppNextDir }.Concat(extraArgs).ToArray(),
-                runDir, TimeoutSeconds));
+                runDir, TimeoutSeconds);
 
             if (!ok)
             {

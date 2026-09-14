@@ -1,9 +1,11 @@
 using System;
 using System.Collections;
 using System.IO;
+using System.Linq;
 using System.Reactive.Linq;
 using System.Reflection;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -36,8 +38,9 @@ public class CodegenApp
 {
     public const string CodegenEvent = "netdaemon_toolkit_codegen";
     private const string ResultFile = "/data/.nd_codegen_result.json";
-    private const string GeneratedRel = "apps/Generated/HomeAssistantGenerated.cs";
-    private const string CodegenNamespace = "HaNetDaemon.HassModel";
+    private const string AppsDir = "/data/apps";
+    private const string DefaultGeneratedRel = "apps/Generated/HomeAssistantGenerated.cs";
+    private const string DefaultCodegenNamespace = "HaNetDaemon.HassModel";
     private const int TimeoutSeconds = 180;
 
     private readonly ILogger<CodegenApp> _log;
@@ -90,13 +93,13 @@ public class CodegenApp
             Directory.CreateDirectory(workDir);
             Directory.CreateDirectory(toolPath);
 
-            var outPath = Path.Combine("/data", GeneratedRel);
+            var (outPath, ns) = ResolveTarget();
             Directory.CreateDirectory(Path.GetDirectoryName(outPath)!);
 
-            var install = await Task.Run(() => ReflectedProcess.Run(
+            var install = await ReflectedProcess.RunAsync(
                 "dotnet",
                 new[] { "tool", "install", "NetDaemon.HassModel.CodeGen", "--tool-path", toolPath },
-                workDir, TimeoutSeconds));
+                workDir, TimeoutSeconds);
             if (!install.ok)
             {
                 WriteResult(new { success = false, reason = "nd-codegen-Installation fehlgeschlagen.", logs = install.log, ts = Now() });
@@ -104,10 +107,10 @@ public class CodegenApp
             }
 
             var ndCodegenBin = Path.Combine(toolPath, "nd-codegen");
-            var run = await Task.Run(() => ReflectedProcess.Run(
+            var run = await ReflectedProcess.RunAsync(
                 ndCodegenBin,
-                new[] { "-host", host, "-port", port, "-ssl", ssl, "-token", token, "-o", outPath, "-ns", CodegenNamespace },
-                workDir, TimeoutSeconds));
+                new[] { "-host", host, "-port", port, "-ssl", ssl, "-token", token, "-o", outPath, "-ns", ns },
+                workDir, TimeoutSeconds);
             if (!run.ok)
             {
                 WriteResult(new { success = false, reason = "nd-codegen meldete einen Fehler.", logs = run.log, ts = Now() });
@@ -115,7 +118,7 @@ public class CodegenApp
             }
 
             var lines = File.Exists(outPath) ? File.ReadAllLines(outPath).Length : 0;
-            WriteResult(new { success = true, file = GeneratedRel, lines, logs = run.log, ts = Now() });
+            WriteResult(new { success = true, file = Path.GetRelativePath("/data", outPath), lines, logs = run.log, ts = Now() });
         }
         catch (Exception ex)
         {
@@ -127,6 +130,24 @@ public class CodegenApp
             try { Directory.Delete(runDir, recursive: true); } catch { /* best-effort cleanup */ }
             Interlocked.Exchange(ref _running, 0);
         }
+    }
+
+    // Regenerates the SAME file this setup already has, wherever it actually lives, instead of
+    // assuming the historical fixed apps/Generated/ location -- same "detect, don't assume"
+    // idiom as RebuildApp's FindSolutionProject. A hand-maintained solution (e.g. Source/'s own
+    // Lib.HassModel/HomeAssistantGenerated.cs) is found and regenerated in place, namespace and
+    // all; the fixed default is only used on a brand-new setup that's never run codegen before.
+    private static (string outPath, string ns) ResolveTarget()
+    {
+        var existing = Directory.EnumerateFiles(AppsDir, "HomeAssistantGenerated.cs", SearchOption.AllDirectories).FirstOrDefault();
+        if (existing is null)
+            return (Path.Combine("/data", DefaultGeneratedRel), DefaultCodegenNamespace);
+
+        var ns = DefaultCodegenNamespace;
+        var match = Regex.Match(File.ReadAllText(existing), @"namespace\s+([\w.]+)\.Generated\s*;");
+        if (match.Success) ns = match.Groups[1].Value;
+
+        return (existing, ns);
     }
 
     private static long Now() => DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -148,7 +169,14 @@ public class CodegenApp
 /// Runs a subprocess via System.Diagnostics.Process, resolved through
 /// reflection so this file never names that type directly — see the note on
 /// CodegenApp for why. The assembly is guaranteed present at runtime (it's
-/// part of the shared framework NetDaemon itself runs on).
+/// part of the shared framework NetDaemon itself runs on). Genuinely async
+/// (WaitForExitAsync/ReadToEndAsync, also via reflection -- their *return
+/// values* are plain Task/Task&lt;string&gt;, already used everywhere in this
+/// file, so nothing new needs to resolve at compile time) rather than
+/// blocking a thread-pool worker for the whole subprocess lifetime, which a
+/// long-running one (an SDK bootstrap, a `dotnet build`) previously did for
+/// up to minutes at a time -- starving anything else sharing the pool, e.g.
+/// StatusApp's own 10s heartbeat timer.
 /// </summary>
 internal static class ReflectedProcess
 {
@@ -156,7 +184,7 @@ internal static class ReflectedProcess
     private static readonly Type PsiType = Asm.GetType("System.Diagnostics.ProcessStartInfo")!;
     private static readonly Type ProcType = Asm.GetType("System.Diagnostics.Process")!;
 
-    public static (bool ok, string log) Run(string file, string[] args, string workDir, int timeoutSeconds)
+    public static async Task<(bool ok, string log)> RunAsync(string file, string[] args, string workDir, int timeoutSeconds)
     {
         var psi = Activator.CreateInstance(PsiType)!;
         PsiType.GetProperty("FileName")!.SetValue(psi, file);
@@ -172,27 +200,30 @@ internal static class ReflectedProcess
         {
             var stdout = ProcType.GetProperty("StandardOutput")!.GetValue(proc)!;
             var stderr = ProcType.GetProperty("StandardError")!.GetValue(proc)!;
-            var readToEnd = stdout.GetType().GetMethod("ReadToEnd", Type.EmptyTypes)!;
+            var readToEndAsync = stdout.GetType().GetMethod("ReadToEndAsync", Type.EmptyTypes)!;
 
-            // Read both streams concurrently so a full pipe buffer on one of
-            // them can never deadlock a process that's still writing to the
-            // other one.
-            string outText = "", errText = "";
-            var outThread = new Thread(() => outText = (string)readToEnd.Invoke(stdout, null)!);
-            var errThread = new Thread(() => errText = (string)readToEnd.Invoke(stderr, null)!);
-            outThread.Start();
-            errThread.Start();
+            // Read both streams concurrently so a full pipe buffer on one of them can never
+            // deadlock a process that's still writing to the other one.
+            var outTask = (Task<string>)readToEndAsync.Invoke(stdout, null)!;
+            var errTask = (Task<string>)readToEndAsync.Invoke(stderr, null)!;
 
-            var exited = (bool)ProcType.GetMethod("WaitForExit", new[] { typeof(int) })!
-                .Invoke(proc, new object[] { timeoutSeconds * 1000 })!;
-            outThread.Join();
-            errThread.Join();
-
-            if (!exited)
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
+            var waitForExitAsync = ProcType.GetMethod("WaitForExitAsync", new[] { typeof(CancellationToken) })!;
+            try
             {
+                await (Task)waitForExitAsync.Invoke(proc, new object[] { cts.Token })!;
+            }
+            catch (OperationCanceledException)
+            {
+                // Kill before anything waits on the pipe reads -- they'd otherwise block
+                // forever on a still-running process, same reason the old thread-based
+                // version had to join them *before* even checking whether it had timed out.
                 try { ProcType.GetMethod("Kill", Type.EmptyTypes)!.Invoke(proc, null); } catch { /* best-effort */ }
                 return (false, $"Zeitüberschreitung nach {timeoutSeconds}s.");
             }
+
+            var outText = await outTask;
+            var errText = await errTask;
 
             var exitCode = (int)ProcType.GetProperty("ExitCode")!.GetValue(proc)!;
             return (exitCode == 0, (outText + errText).Trim());

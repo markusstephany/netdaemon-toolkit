@@ -194,8 +194,16 @@ function svgIcon(path, cls) {
 }
 
 // Heuristic hint only (non-enforced): generated code probably shouldn't be edited.
+// A loose "path contains 'generated'" substring check used to be enough (only ever matched the
+// one apps/Generated/HomeAssistantGenerated.cs this panel itself manages) -- but a compiled
+// build's bin/obj (see "show all files") also contains MSBuild-generated files whose *paths*
+// happen to contain "generated" too (e.g. *.GeneratedMSBuildEditorConfig.editorconfig), which
+// this then wrongly treated the exact same way. Match the actual filename this panel's own
+// codegen convention always uses (both apps/Generated/ and Source/Lib.HassModel/, see
+// GENERATED_REL in the integration's const.py) instead of a substring of the whole path.
 function isGenerated(path) {
-  return path.toLowerCase().includes("generated");
+  const name = path.split("/").pop() || "";
+  return name.toLowerCase() === "homeassistantgenerated.cs";
 }
 
 // Filename (without .cs) -> NetDaemon class slug, e.g. HeatingShadowApp ->
@@ -810,11 +818,18 @@ class NetDaemonToolkitPanel extends HTMLElement {
       return;
     }
     const tree = this._buildTree();
+    // Trace keys are registered per DOMAIN (Source/'s own App constant, e.g. "backup-watch"),
+    // not derived from any single file's name -- match top-level apps/<Domain>/ folders by that
+    // convention first (see _domainTraceFolders), and fall back to the old per-file slug match
+    // below for anything it doesn't cover (a flat apps/X/XApp.cs layout, where the trace key
+    // historically *was* the file's own slug).
+    const { promotions: domainTracePromotions, covered: domainTraceCovered } =
+      this._domainTraceFolders(tree);
     // A domain's [NetDaemonApp] class can live directly in its folder (a flat apps/X/XApp.cs
     // layout) or several layers deep (Source/'s apps/X/Logic/Business/XAdapter.cs) -- either way
-    // the toggle/trace/regenerate button belongs on the OUTERMOST folder whose subtree still
-    // contains exactly one match, so the whole domain folder acts as the one place to control it,
-    // not whichever subfolder the file happens to sit in.
+    // the toggle/regenerate button belongs on the OUTERMOST folder whose subtree still contains
+    // exactly one match, so the whole domain folder acts as the one place to control it, not
+    // whichever subfolder the file happens to sit in.
     this._promoted = {
       toggle: this._promoteSingleMatches(tree, (f) => {
         const slug = fileSlug(f.name);
@@ -822,11 +837,13 @@ class NetDaemonToolkitPanel extends HTMLElement {
         return id ? { file: f, id } : null;
       }),
       trace: this._promoteSingleMatches(tree, (f) => {
+        if (domainTraceCovered.has(f.path)) return null; // already handled at the domain level
         const slug = fileSlug(f.name);
         return this._traceApps && this._traceApps.has(slug) ? { file: f, slug } : null;
       }),
       gen: this._promoteSingleMatches(tree, (f) => (isGenerated(f.path) ? { file: f } : null)),
     };
+    this._domainTracePromotions = domainTracePromotions;
     this._renderNode(tree, 0, this._list);
     if (this._filter && !this._list.childElementCount) {
       this._listNote(this._t("noMatches"));
@@ -867,6 +884,33 @@ class NetDaemonToolkitPanel extends HTMLElement {
     decide(dir);
 
     return { promotions, suppressed };
+  }
+
+  // Source/'s own trace-key convention: each domain logs under its App constant, the kebab-case
+  // of its top-level apps/<Domain>/ folder name (e.g. "BackupWatch" -> "backup-watch") -- the
+  // exact rule CrossCutting's DataPathProvider already uses for that domain's data folder, see
+  // Source/CrossCutting/DataPathProvider.cs. Matching by folder name instead of by file slug
+  // survives Source/'s layered layout (the actual [NetDaemonApp] class can be several folders
+  // deep, e.g. Logic/Business/XAdapter.cs) and doesn't care which file inside actually logs.
+  _domainTraceFolders(root) {
+    const promotions = new Map(); // dir.path -> { slug, name }
+    const covered = new Set(); // every file path under such a folder, so the per-file fallback
+    // match (see _renderTree) never also tries it
+    if (!this._traceApps) return { promotions, covered };
+
+    const collectFiles = (d, out) => {
+      for (const f of d.files) out.add(f.path);
+      for (const name of Object.keys(d.dirs)) collectFiles(d.dirs[name], out);
+    };
+
+    for (const name of Object.keys(root.dirs)) {
+      const key = name.replace(/([a-z])([A-Z])/g, "$1-$2").toLowerCase();
+      if (!this._traceApps.has(key)) continue;
+      const dir = root.dirs[name];
+      promotions.set(dir.path, { slug: key, name });
+      collectFiles(dir, covered);
+    }
+    return { promotions, covered };
   }
 
   _updateToggles() {
@@ -1042,7 +1086,11 @@ class NetDaemonToolkitPanel extends HTMLElement {
       const dir = node.dirs[name];
       if (filtering && !this._dirHasMatch(dir)) continue;
       const open = filtering ? true : this._expanded.has(dir.path);
-      const gen = isGenerated(dir.path);
+      // A folder styles as "generated" either because its own path says so (apps/Generated/) or
+      // because it's where the promoted regenerate button for a nested generated file landed
+      // (e.g. Lib.HassModel/, whose own path doesn't say "generated" but whose subtree holds
+      // exactly one such file) -- both should look the same, not just the one the path matches.
+      const gen = isGenerated(dir.path) || this._promoted.gen.promotions.has(dir.path);
       const reserved = this._isReserved(dir.path);
       const head = document.createElement("button");
       head.className = "folder" + (gen ? " generated" : "") + (reserved ? " reserved" : "");
@@ -1102,16 +1150,18 @@ class NetDaemonToolkitPanel extends HTMLElement {
         });
         head.appendChild(tg);
       }
+      const domainTrace = this._domainTracePromotions && this._domainTracePromotions.get(dir.path);
       const tracePromoted = this._promoted.trace.promotions.get(dir.path);
-      if (tracePromoted) {
-        const { file: f, slug } = tracePromoted;
+      if (domainTrace || tracePromoted) {
+        const slug = domainTrace ? domainTrace.slug : tracePromoted.slug;
+        const label = domainTrace ? domainTrace.name : tracePromoted.file.name;
         const tb = document.createElement("button");
         tb.className = "nd-trace";
         tb.innerHTML = svgIcon(ICONS.history);
         tb.title = this._t("t_traces");
         tb.addEventListener("click", (ev) => {
           ev.stopPropagation();
-          this._openTraces(slug, f.name);
+          this._openTraces(slug, label);
         });
         head.appendChild(tb);
       }
@@ -1444,15 +1494,25 @@ class NetDaemonToolkitPanel extends HTMLElement {
     try {
       const r = await this._ws({ type: "netdaemon_toolkit/status" });
       if (r.alive) {
+        this._staleStreak = 0;
         this._ndRt.className = "nd-rt ok";
         this._ndRt.textContent = "● " + this._t("stActive");
         this._ndRt.title = this._t("stTitleAlive", { n: r.age });
       } else {
-        this._ndRt.className = "nd-rt bad";
-        this._ndRt.textContent =
-          "● " + (r.ts == null ? this._t("stNoStatus") : this._t("stInactive"));
-        this._ndRt.title =
-          r.ts == null ? this._t("stTitleNoFile") : this._t("stTitleStale", { n: r.age });
+        // A single not-alive reading can be noise from something between the browser and HA
+        // (a slow relay hop over a remote connection, e.g. Nabu Casa) rather than NetDaemon
+        // actually being down -- confirmed live: the heartbeat file itself stayed fresh the
+        // whole time the panel showed red. Only flip the indicator after two readings in a row
+        // (~20s, since this poll runs every 10s) -- filters a one-off blip while a real outage
+        // still shows within ~20s, not frozen forever like a fully failed poll would be.
+        this._staleStreak = (this._staleStreak || 0) + 1;
+        if (this._staleStreak >= 2) {
+          this._ndRt.className = "nd-rt bad";
+          this._ndRt.textContent =
+            "● " + (r.ts == null ? this._t("stNoStatus") : this._t("stInactive"));
+          this._ndRt.title =
+            r.ts == null ? this._t("stTitleNoFile") : this._t("stTitleStale", { n: r.age });
+        }
       }
       // The Source/Compiled switch is a single sliding pill (like the per-app enable toggles),
       // always visible -- a "switch for the curious" -- but only does something once the
