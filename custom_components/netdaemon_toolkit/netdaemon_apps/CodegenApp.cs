@@ -143,8 +143,14 @@ public class CodegenApp
         if (existing is null)
             return (Path.Combine("/data", DefaultGeneratedRel), DefaultCodegenNamespace);
 
+        // nd-codegen's -ns is used verbatim as the file's declared namespace -- it does NOT
+        // append ".Generated" itself (confirmed the hard way: an earlier version of this method
+        // assumed it did and stripped a ".Generated" suffix before passing -ns, silently
+        // regenerating this exact file under the wrong namespace and breaking every caller's
+        // `using ....Generated;`). Read back whatever the existing file actually declares, in
+        // full, so regenerating it reproduces the same namespace instead of guessing at one.
         var ns = DefaultCodegenNamespace;
-        var match = Regex.Match(File.ReadAllText(existing), @"namespace\s+([\w.]+)\.Generated\s*;");
+        var match = Regex.Match(File.ReadAllText(existing), @"namespace\s+([\w.]+)\s*;");
         if (match.Success) ns = match.Groups[1].Value;
 
         return (existing, ns);

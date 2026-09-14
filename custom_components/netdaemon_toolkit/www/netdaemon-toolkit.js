@@ -1579,7 +1579,13 @@ class NetDaemonToolkitPanel extends HTMLElement {
       if (r.success) {
         this._setInfo(this._t("rebuildDone"));
       } else {
-        this._setInfo(this._t("rebuildFail") + (r.reason || r.log || ""), true);
+        // r.reason is a fixed, generic string ("dotnet build failed.") for an actual compile
+        // failure -- always truthy, so it alone was all that ever showed; the useful part (the
+        // compiler's own error list) is in r.log and never appeared anywhere in the panel.
+        // Tail it: a real error list can be thousands of characters, and the actual failing
+        // line(s) are always at the end, not the "Determining projects to restore..." preamble.
+        const tail = r.log ? "\n" + r.log.slice(-1500) : "";
+        this._setInfo(this._t("rebuildFail") + (r.reason || "") + tail, true);
       }
     } catch (e) {
       this._setInfo(this._t("rebuildFail") + (e.message || e), true);
@@ -1779,7 +1785,7 @@ class NetDaemonToolkitPanel extends HTMLElement {
         button.action { cursor:pointer; border:none; border-radius:8px; padding:8px 16px;
                         background:var(--primary-color); color:#fff; font-weight:600; }
         button.action:disabled { opacity:.5; cursor:default; }
-        .info { font-size:12px; min-height:1em; opacity:.8; }
+        .info { font-size:12px; min-height:1em; opacity:.8; white-space:pre-wrap; word-break:break-word; }
         .info.error { color:var(--error-color,#c62828); opacity:1; }
         .muted { opacity:.6; font-size:13px; padding:6px; }
         .nd-tools { display:flex; flex-wrap:wrap; gap:6px; padding:0 6px 4px; }
