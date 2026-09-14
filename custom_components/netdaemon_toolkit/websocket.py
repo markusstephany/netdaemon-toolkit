@@ -41,7 +41,7 @@ from .const import (
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 # Trace files live in <base>/.traces/<app-slug>.jsonl; the slug is class-name
 # snake_case, so this also guards against path traversal in the app id.
-_TRACE_SLUG = re.compile(r"^[a-z0-9_]+$")
+_TRACE_SLUG = re.compile(r"^[a-z0-9_-]+$")  # Source/'s own trace keys are kebab-case, e.g. "backup-watch"
 
 
 def _lang(hass: HomeAssistant) -> str:
