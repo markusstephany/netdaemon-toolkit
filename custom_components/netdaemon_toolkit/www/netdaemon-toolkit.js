@@ -69,6 +69,7 @@ const I18N = {
     t_switchSource: "Currently compiled — click to switch to the source-deployed version",
     t_switchCompiled: "Currently source-deployed — click to switch to the compiled build",
     switchRunning: "Switching …", switchDone: "Switched.", switchFail: "Switch failed: ",
+    switchNoBuildConfirm: "No compiled build exists yet. Build one now and switch to it once done?\nA failed build leaves source-deploy running; this can take a while on the first run (installs the .NET SDK).",
     btnRollback: "↺ Rollback", t_rollback: "Switch back to the build that preceded the current one",
     rollbackConfirm: "Roll back to the previous build?",
     rollbackRunning: "Rolling back …", rollbackDone: "Rolled back. Reload to apply.",
@@ -151,6 +152,7 @@ const I18N = {
     t_switchSource: "Aktuell kompiliert — zum Umschalten auf die Source-Deploy-Version klicken",
     t_switchCompiled: "Aktuell Source-Deploy — zum Umschalten auf den kompilierten Build klicken",
     switchRunning: "Wird umgeschaltet …", switchDone: "Umgeschaltet.", switchFail: "Umschalten fehlgeschlagen: ",
+    switchNoBuildConfirm: "Es gibt noch keinen kompilierten Build. Jetzt einen bauen und danach umschalten?\nEin fehlgeschlagener Build lässt Source-Deploy einfach weiterlaufen; kann beim ersten Mal dauern (installiert das .NET SDK).",
     btnRollback: "↺ Rollback", t_rollback: "Zurück auf den Build vor dem aktuellen wechseln",
     rollbackConfirm: "Auf den vorherigen Build zurückwechseln?",
     rollbackRunning: "Rollback läuft …", rollbackDone: "Zurückgesetzt. Zum Übernehmen neu laden.",
@@ -1557,7 +1559,13 @@ class NetDaemonToolkitPanel extends HTMLElement {
       this._switchEl.title = compiled ? this._t("t_switchSource") : this._t("t_switchCompiled");
       this._modeLabelSourceEl.classList.toggle("active", !compiled);
       this._modeLabelCompiledEl.classList.toggle("active", compiled);
-      this._rebuildBtn.hidden = !r.compiled_build_ready;
+      // Only shown once actually in compiled mode -- from source mode, Rebuild used to stay
+      // visible as the only way to bootstrap a first-ever compiled build, but that meant clicking
+      // it silently switched you to compiled once done (confusing on its own, and a source of
+      // real confusion during tonight's testing). The Source/Compiled switch itself now handles
+      // that bootstrap case instead (see _switchMode's "no_build" branch), so Rebuild here can
+      // stay exactly what its label says: rebuild the compiled version you're already running.
+      this._rebuildBtn.hidden = !(r.compiled_build_ready && compiled);
       this._rebuildBtn.disabled = busy;
       this._rollbackBtn.hidden = !(r.compiled_build_ready && compiled);
       this._rollbackBtn.disabled = busy;
@@ -1567,10 +1575,15 @@ class NetDaemonToolkitPanel extends HTMLElement {
     }
   }
 
-  async _rebuild() {
+  // skipConfirm: _switchMode's "no_build" branch already confirmed via switchNoBuildConfirm,
+  // which covers the same "this switches you to compiled once done" point rebuildConfirmSource
+  // would -- asking twice in a row for the one action would just be annoying.
+  async _rebuild(skipConfirm) {
     if (this._rebuildBusy || this._switchBusy || this._rollbackBusy || this._reloadBusy) return;
-    const confirmKey = this._currentMode === "compiled" ? "rebuildConfirm" : "rebuildConfirmSource";
-    if (!window.confirm(this._t(confirmKey))) return;
+    if (!skipConfirm) {
+      const confirmKey = this._currentMode === "compiled" ? "rebuildConfirm" : "rebuildConfirmSource";
+      if (!window.confirm(this._t(confirmKey))) return;
+    }
     this._rebuildBusy = true;
     this._rebuildBtn.disabled = true;
     this._setInfo(this._t("rebuildRunning"));
@@ -1608,6 +1621,15 @@ class NetDaemonToolkitPanel extends HTMLElement {
           this._pollStatus();
           if (tries >= 8) clearInterval(iv);
         }, 2000);
+      } else if (r.no_build) {
+        // No compiled build to switch to yet -- rather than just showing an error and leaving
+        // the Rebuild button permanently visible even in source mode (confusing: it silently
+        // switches you to compiled once done, see rebuildConfirmSource), offer to build right
+        // here. _rebuild() itself re-points the symlink to compiled on success, so a successful
+        // build here already finishes what this switch attempt couldn't.
+        this._switchBusy = false;
+        if (window.confirm(this._t("switchNoBuildConfirm"))) await this._rebuild(true);
+        return;
       } else {
         this._setInfo(this._t("switchFail") + (r.reason || ""), true);
       }

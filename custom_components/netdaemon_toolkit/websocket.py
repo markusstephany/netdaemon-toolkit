@@ -598,8 +598,11 @@ async def ws_switch_mode(hass, connection, msg):
     elif mode == "compiled":
         entry = base / APP_DIR_REL / APP_ENTRY_FILE
         if not await hass.async_add_executor_job(entry.exists):
+            # A dedicated field, not just reason text, so the panel can react precisely (offer to
+            # Rebuild right there) instead of string-matching an error message.
             connection.send_result(
-                msg["id"], {"success": False, "reason": "No compiled build exists yet -- use Rebuild first."}
+                msg["id"],
+                {"success": False, "no_build": True, "reason": "No compiled build exists yet -- use Rebuild first."},
             )
             return
         target = f"{CONTAINER_DATA_ROOT}/{APP_DIR_REL}/{APP_ENTRY_FILE}"
