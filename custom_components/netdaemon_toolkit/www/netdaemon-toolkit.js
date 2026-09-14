@@ -33,6 +33,7 @@ const I18N = {
       "This overwrites the generated file and takes ~20s.",
     codegenRunning: "Regenerating entities … (~20s)",
     codegenDone: "Entities regenerated: {n} lines. Reload NetDaemon to apply.",
+    codegenDoneCompiled: "Entities regenerated: {n} lines. Rebuild (not just Reload) to apply — a plain reload only restarts the already-built version.",
     codegenFail: "Codegen failed: ",
     statusLoading: "NetDaemon …",
     save: "Save",
@@ -114,6 +115,7 @@ const I18N = {
       "Überschreibt die generierte Datei und dauert ~20s.",
     codegenRunning: "Entities werden generiert … (~20s)",
     codegenDone: "Entities neu generiert: {n} Zeilen. Zum Übernehmen NetDaemon neu laden.",
+    codegenDoneCompiled: "Entities neu generiert: {n} Zeilen. Zum Übernehmen \"Neu bauen\" nutzen (nicht nur Reload — das startet nur die schon gebaute Version neu).",
     codegenFail: "Codegen fehlgeschlagen: ",
     statusLoading: "NetDaemon …",
     save: "Speichern",
@@ -1296,7 +1298,8 @@ class NetDaemonToolkitPanel extends HTMLElement {
     try {
       const r = await this._ws({ type: "netdaemon_toolkit/codegen" });
       if (r.success) {
-        this._setInfo(this._t("codegenDone", { n: r.lines }));
+        const doneKey = this._currentMode === "compiled" ? "codegenDoneCompiled" : "codegenDone";
+        this._setInfo(this._t(doneKey, { n: r.lines }));
         this._loadFiles(); // refresh tree so the regenerated file shows up
       } else {
         this._setInfo(this._t("codegenFail") + (r.reason || ""), true);
