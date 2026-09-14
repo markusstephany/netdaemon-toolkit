@@ -5,9 +5,11 @@ NetDaemon setup — split out of the README to keep that one skimmable.
 
 ## Source-deploy mode
 
-This panel only makes sense if your NetDaemon instance runs in **source-deploy**
-mode — compiling the `.cs` apps at runtime instead of loading a pre-built DLL.
-A few things worth knowing if you're setting that up:
+This panel is built around NetDaemon's **source-deploy** mode — compiling the
+`.cs` apps at runtime instead of loading a pre-built DLL — and needs it, at
+least for initial setup; [Compiled builds](#compiled-builds-optional) below
+is an optional step past this mode's trade-offs, not a replacement for
+setting it up first. A few things worth knowing if you're setting that up:
 
 - Set `NetDaemon__AppSource=/path/to/apps` (env var) instead of pointing
   NetDaemon at a built app. This switches it to compile your `.cs` files

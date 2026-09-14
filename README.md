@@ -1,9 +1,11 @@
 # NetDaemon Toolkit
 
-A tiny Home Assistant custom integration that adds a sidebar panel for managing
-a [NetDaemon](https://netdaemon.xyz/) instance running in **source-deploy**
-mode — straight from the HA frontend (and therefore from anywhere via Nabu
-Casa, no VPN/port-forward needed).
+A tiny Home Assistant custom integration that adds a sidebar panel for
+managing a [NetDaemon](https://netdaemon.xyz/) instance — straight from the
+HA frontend (and therefore from anywhere via Nabu Casa, no VPN/port-forward
+needed). Built for NetDaemon's **source-deploy** mode; optionally also builds
+and runs your apps as a real, compiled host instead — see
+[Compiled builds](docs/architecture.md#compiled-builds-optional).
 
 It started as an **emergency single-file editor** and has grown to cover the
 day-to-day loop around it: triggering entity codegen, reloading the runtime,
@@ -34,15 +36,18 @@ without opening an IDE.
 
 ## Requirements
 
-- NetDaemon running in **source-deploy** mode. See
+- NetDaemon set up to run in **source-deploy** mode, at least initially. See
   [docs/architecture.md](docs/architecture.md) for what that entails and its
-  trade-offs.
+  trade-offs — and, once that's working, the optional
+  [compiled builds](docs/architecture.md#compiled-builds-optional) path past
+  those trade-offs.
 - Home Assistant must be able to see the NetDaemon source folder — bind-mount
   it into the HA container, e.g. `/path/to/netdaemon:/config/netdaemon`.
-- Reload, status, and codegen need three small NetDaemon-side apps, which the
-  integration installs into your NetDaemon folder automatically on setup (see
-  Installation below). Without them the panel still works as a plain file
-  editor.
+- Reload, status, and codegen need a handful of small NetDaemon-side apps,
+  which the integration installs into your NetDaemon folder automatically on
+  setup (see Installation below and
+  [docs/architecture.md](docs/architecture.md#netdaemon-side-apps) for what
+  each one does). Without them the panel still works as a plain file editor.
 
 ## Installation (HACS, custom repository)
 

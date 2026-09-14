@@ -809,11 +809,64 @@ class NetDaemonToolkitPanel extends HTMLElement {
       this._listNote(this._t("noFiles"));
       return;
     }
-    this._renderNode(this._buildTree(), 0, this._list);
+    const tree = this._buildTree();
+    // A domain's [NetDaemonApp] class can live directly in its folder (a flat apps/X/XApp.cs
+    // layout) or several layers deep (Source/'s apps/X/Logic/Business/XAdapter.cs) -- either way
+    // the toggle/trace/regenerate button belongs on the OUTERMOST folder whose subtree still
+    // contains exactly one match, so the whole domain folder acts as the one place to control it,
+    // not whichever subfolder the file happens to sit in.
+    this._promoted = {
+      toggle: this._promoteSingleMatches(tree, (f) => {
+        const slug = fileSlug(f.name);
+        const id = (this._appToggleEntities || []).find((tid) => tid.endsWith("_" + slug));
+        return id ? { file: f, id } : null;
+      }),
+      trace: this._promoteSingleMatches(tree, (f) => {
+        const slug = fileSlug(f.name);
+        return this._traceApps && this._traceApps.has(slug) ? { file: f, slug } : null;
+      }),
+      gen: this._promoteSingleMatches(tree, (f) => (isGenerated(f.path) ? { file: f } : null)),
+    };
+    this._renderNode(tree, 0, this._list);
     if (this._filter && !this._list.childElementCount) {
       this._listNote(this._t("noMatches"));
     }
     this._updateToggles();
+  }
+
+  // Generic across toggle/trace/regenerate: matchFn(file) returns a match descriptor (or a
+  // falsy value) for a single file. Returns the folder->match promotions (where to render the
+  // button) and the set of file paths already covered by one of those promotions (so neither an
+  // intermediate folder nor the file's own row renders it a second time). A folder whose subtree
+  // holds several independent matches (e.g. apps/_toolkit/'s 3 apps) is left undecided here --
+  // recursion continues into its children, and if nothing narrows to exactly one anywhere, the
+  // file row itself falls back to rendering its own button (see _renderNode).
+  _promoteSingleMatches(dir, matchFn) {
+    const promotions = new Map();
+    const suppressed = new Set();
+
+    const collectAll = (d) => {
+      let out = [];
+      for (const name of Object.keys(d.dirs)) out = out.concat(collectAll(d.dirs[name]));
+      for (const f of d.files) {
+        const m = matchFn(f);
+        if (m) out.push(m);
+      }
+      return out;
+    };
+
+    const decide = (d) => {
+      const matches = collectAll(d);
+      if (matches.length === 1) {
+        promotions.set(d.path, matches[0]);
+        suppressed.add(matches[0].file.path);
+        return;
+      }
+      for (const name of Object.keys(d.dirs)) decide(d.dirs[name]);
+    };
+    decide(dir);
+
+    return { promotions, suppressed };
   }
 
   _updateToggles() {
@@ -983,8 +1036,7 @@ class NetDaemonToolkitPanel extends HTMLElement {
     return Object.keys(dir.dirs).some((n) => this._dirHasMatch(dir.dirs[n]));
   }
 
-  _renderNode(node, depth, container, claimed) {
-    claimed = claimed || {}; // { [filePath]: { gen, toggle, trace } } already shown on the parent folder row
+  _renderNode(node, depth, container) {
     const filtering = !!this._filter;
     for (const name of Object.keys(node.dirs).sort()) {
       const dir = node.dirs[name];
@@ -1017,20 +1069,11 @@ class NetDaemonToolkitPanel extends HTMLElement {
           ]);
         });
       }
-      // A folder's action buttons (regenerate / on-off toggle / trace) key
-      // off whichever direct child file matches — e.g. WashingMachineApp.cs
-      // inside apps/WashingMachine/ owns the toggle+trace, so the folder row
-      // gets them instead of the individual file row. Lets a domain folder
-      // with several files (the app + its pure-logic files) act as the one
-      // place to control/inspect that app, without needing it expanded. But
-      // a folder can hold SEVERAL independent apps too (e.g. apps/_toolkit/
-      // has 3) — only promote a button when exactly one file in the folder
-      // matches, otherwise leave it per-file so each app stays individually
-      // controllable.
-      const childClaimed = {};
-      const genMatches = dir.files.filter((f) => isGenerated(f.path));
-      if (genMatches.length === 1) {
-        const f = genMatches[0];
+      // A folder's action buttons (regenerate / on-off toggle / trace) key off whichever single
+      // file the corresponding _promoted map picked THIS folder for — see _promoteSingleMatches
+      // for how that's decided (outermost folder whose subtree has exactly one match).
+      const genPromoted = this._promoted.gen.promotions.get(dir.path);
+      if (genPromoted) {
         const rg = document.createElement("button");
         rg.className = "nd-regen";
         rg.textContent = "⟲";
@@ -1041,18 +1084,10 @@ class NetDaemonToolkitPanel extends HTMLElement {
           this._runCodegen();
         });
         head.appendChild(rg);
-        (childClaimed[f.path] ||= {}).gen = true;
       }
-      const toggleMatches = [];
-      const traceMatches = [];
-      for (const f of dir.files) {
-        const slug = fileSlug(f.name);
-        const id = (this._appToggleEntities || []).find((tid) => tid.endsWith("_" + slug));
-        if (id) toggleMatches.push({ file: f, id });
-        if (this._traceApps && this._traceApps.has(slug)) traceMatches.push({ file: f, slug });
-      }
-      if (toggleMatches.length === 1) {
-        const { file: f, id: toggleId } = toggleMatches[0];
+      const togglePromoted = this._promoted.toggle.promotions.get(dir.path);
+      if (togglePromoted) {
+        const toggleId = togglePromoted.id;
         const tg = document.createElement("span");
         tg.className = "app-toggle";
         tg.dataset.entity = toggleId;
@@ -1066,10 +1101,10 @@ class NetDaemonToolkitPanel extends HTMLElement {
           );
         });
         head.appendChild(tg);
-        (childClaimed[f.path] ||= {}).toggle = true;
       }
-      if (traceMatches.length === 1) {
-        const { file: f, slug } = traceMatches[0];
+      const tracePromoted = this._promoted.trace.promotions.get(dir.path);
+      if (tracePromoted) {
+        const { file: f, slug } = tracePromoted;
         const tb = document.createElement("button");
         tb.className = "nd-trace";
         tb.innerHTML = svgIcon(ICONS.history);
@@ -1079,16 +1114,14 @@ class NetDaemonToolkitPanel extends HTMLElement {
           this._openTraces(slug, f.name);
         });
         head.appendChild(tb);
-        (childClaimed[f.path] ||= {}).trace = true;
       }
       container.appendChild(head);
-      if (open) this._renderNode(dir, depth + 1, container, childClaimed);
+      if (open) this._renderNode(dir, depth + 1, container);
     }
     for (const file of node.files.sort((a, b) => a.name.localeCompare(b.name))) {
       if (!this._fileMatches(file.name)) continue;
       const gen = isGenerated(file.path);
       const reserved = this._isReserved(file.path);
-      const claim = claimed[file.path] || {};
       const item = document.createElement("button");
       item.className =
         "file" + (file.path === this._active ? " active" : "") +
@@ -1098,11 +1131,11 @@ class NetDaemonToolkitPanel extends HTMLElement {
       item.innerHTML = svgIcon(ICONS.file) + `<span class="lbl"></span>`;
       item.querySelector(".lbl").textContent = file.name;
       if (gen) item.title = this._t("genTooltip");
-      // Regenerate / on-off toggle / trace buttons normally live on the
-      // enclosing folder row (see the dirs loop above) — except when the
-      // folder couldn't claim them (tree root with no parent folder, or a
-      // folder holding several independent apps, each keeping its own).
-      if (gen && !claim.gen) {
+      // Regenerate / on-off toggle / trace buttons normally live on the enclosing folder row
+      // (see the dirs loop above) — except when nothing above this file promoted them (tree
+      // root with no parent folder, or a folder holding several independent apps, none of which
+      // narrows to a unique match anywhere above this file — see _promoteSingleMatches).
+      if (gen && !this._promoted.gen.suppressed.has(file.path)) {
         const rg = document.createElement("button");
         rg.className = "nd-regen";
         rg.textContent = "⟲";
@@ -1115,7 +1148,7 @@ class NetDaemonToolkitPanel extends HTMLElement {
         item.appendChild(rg);
       }
       const slug = fileSlug(file.name);
-      if (!claim.toggle) {
+      if (!this._promoted.toggle.suppressed.has(file.path)) {
         const toggleId = (this._appToggleEntities || []).find((id) => id.endsWith("_" + slug));
         if (toggleId) {
           const tg = document.createElement("span");
@@ -1133,7 +1166,7 @@ class NetDaemonToolkitPanel extends HTMLElement {
           item.appendChild(tg);
         }
       }
-      if (!claim.trace && this._traceApps && this._traceApps.has(slug)) {
+      if (!this._promoted.trace.suppressed.has(file.path) && this._traceApps && this._traceApps.has(slug)) {
         const tb = document.createElement("button");
         tb.className = "nd-trace";
         tb.innerHTML = svgIcon(ICONS.history);
