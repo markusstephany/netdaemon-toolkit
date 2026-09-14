@@ -51,7 +51,13 @@ directory the first time it sets up (skipped if the files already exist):
   `nd-codegen` as a plain subprocess of itself (no Docker access needed —
   it already has everything it needs: `dotnet`, network access, and its own
   `HomeAssistant__*` connection env vars), and writes the outcome to a
-  result file the panel polls for.
+  result file the panel polls for. Regenerates whichever
+  `HomeAssistantGenerated.cs` already exists anywhere under `apps/` in
+  place (namespace included, read back from that same file) rather than
+  assuming the fixed `apps/Generated/` location — same "detect, don't
+  assume" idiom as `RebuildApp`'s own project detection — and only falls
+  back to that fixed default/namespace on a setup that's never run codegen
+  before.
 - **RebuildApp** — listens for the `netdaemon_toolkit_rebuild` HA event
   (fired by the panel's Rebuild button, see
   [Compiled builds](#compiled-builds-optional) below) and runs `dotnet build`
@@ -102,29 +108,49 @@ same `apps/` tree as a real, full-SDK `dotnet build` instead.
    that env var (a plain `docker restart` does **not** pick up a changed
    `environment:` block).
 
-From that point on, the panel shows a Source/Compiled switch plus Rebuild
-and Rollback buttons — nothing else changes until you actually use them;
-NetDaemon keeps running in source-deploy mode exactly as before.
+From that point on, the panel shows a Source/Compiled switch; nothing else
+changes until you actually use it — NetDaemon keeps running in
+source-deploy mode exactly as before.
 
-- **Rebuild** installs the .NET SDK onto NetDaemon's own data volume on
-  first use (no Docker image change, no root needed), then runs
-  `dotnet build` against `apps/` as a subprocess. Two shapes of `apps/` are
-  supported: a flat folder of loose `.cs` files (the default, same shape
-  source-deploy uses) gets a throwaway wrapper project generated around it;
-  an existing multi-project solution (exactly one `.csproj` anywhere under
-  `apps/` with `<OutputType>Exe</OutputType>`) gets built directly, with its
-  own `<ProjectReference>`s resolved as normal — useful if you maintain
-  NetDaemon apps as a real solution outside this repo already. A failed
-  build never touches the running deployment: it builds into a scratch
-  location first and only promotes that once `dotnet build` actually
-  succeeds.
+- **The Source/Compiled switch** re-points which build NetDaemon launches
+  into on its next restart (a symlink under NetDaemon's data volume) and
+  asks it to reload. Switching to compiled with no build yet offers to
+  build one right there instead of just failing — see Rebuild below, which
+  it triggers under the hood; the switch only actually completes once that
+  build succeeds.
+- **Rebuild** (only shown once you're already running compiled — the
+  bootstrap case above is the only time you'd want it from source mode,
+  and the switch handles that itself now) installs the .NET SDK onto
+  NetDaemon's own data volume on first use (no Docker image change, no
+  root needed), then runs `dotnet build` against `apps/` as a subprocess.
+  Two shapes of `apps/` are supported: a flat folder of loose `.cs` files
+  (the default, same shape source-deploy uses) gets a throwaway wrapper
+  project generated around it; an existing multi-project solution (exactly
+  one `.csproj` anywhere under `apps/` with `<OutputType>Exe</OutputType>`)
+  gets built directly, with its own `<ProjectReference>`s resolved as
+  normal — useful if you maintain NetDaemon apps as a real solution outside
+  this repo already. A failed build never touches the running deployment:
+  it builds into a scratch location first and only promotes that once
+  `dotnet build` actually succeeds. If a solution has its own
+  `HomeAssistantGenerated.cs` (e.g. hand-placed, not at the default
+  `apps/Generated/` this panel otherwise uses), the panel's own
+  "regenerate entities" button finds and updates it in place — see
+  [Regenerate entities](#netdaemon-side-apps) below.
 - **Rollback** swaps back to the build that preceded the current one —
   works even while the container is crash-looping, since it's a plain
   filesystem operation from the HA side, independent of NetDaemon's own
   cooperation.
-- **The Source/Compiled switch** just re-points which build NetDaemon
-  launches into on its next restart (a symlink under NetDaemon's data
-  volume) and asks it to reload.
+- **bin/obj** (a compiled build leaves one behind per project) stays out of
+  the default file tree, same as any non-`.cs` file — "show all files"
+  still reveals it.
+- **The per-app enable toggle, trace, and regenerate-entities buttons**
+  attach to the outermost `apps/<Domain>/` folder that uniquely owns the
+  match, not necessarily wherever the matching file itself sits — a real
+  solution's `[NetDaemonApp]` class can live several folders deep (e.g.
+  `apps/X/Logic/Business/XAdapter.cs`), and decision traces are matched by
+  each domain's own trace key (its folder name, kebab-cased) rather than by
+  file name, since a solution's own class names don't have to match
+  whatever wrote the trace.
 
 **Known limitation:** once `apps/` becomes a real multi-project solution (as
 opposed to loose `.cs` files), the Source-deploy option stops being usable —
