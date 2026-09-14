@@ -24,6 +24,11 @@ without opening an IDE.
   NetDaemon runtime, both from the panel.
 - Optional log view and webhook relay (forward HA webhooks onto the event
   bus so NetDaemon apps can react to them without an `automations.yaml` shim).
+- Optional **compiled builds**: build the same `apps/` tree as a real,
+  full-SDK `dotnet build` instead of NetDaemon's own source-deploy compiler
+  (full NuGet access, no narrow-reference-set workarounds), with Rebuild and
+  Rollback buttons in the panel. See
+  [docs/architecture.md](docs/architecture.md#compiled-builds-optional).
 - No Docker socket or API access anywhere in this integration.
 - Admin-only access throughout. No build step, no external dependencies.
 
@@ -49,15 +54,18 @@ without opening an IDE.
    relays (see Configuration below).
 5. Restart NetDaemon once, **the normal way you already restart it** (Docker,
    the add-on, however you manage it — not from inside the panel). The
-   integration writes `ControlApp.cs`, `StatusApp.cs`, and `CodegenApp.cs`
-   into `apps/_toolkit/` under your configured directory on setup — but only
-   the ones missing, so it never overwrites files you've customized. This
-   first restart is what gets these apps running in the first place; the
-   panel's own reload button won't do anything yet, since it works by
-   asking `ControlApp` to restart NetDaemon, and `ControlApp` isn't running
-   until after this restart. Every restart after this first one can go
-   through the panel. (Home Assistant will also show a persistent
-   notification as a reminder whenever this applies.)
+   integration writes a handful of small NetDaemon-side files (reload/status/
+   codegen/rebuild apps, plus two files only used by compiled builds — see
+   below) into `apps/_toolkit/` under your configured directory on setup —
+   but only the ones missing, so it never overwrites files you've
+   customized. This first restart is what gets these apps running in the
+   first place; the panel's own reload button won't do anything yet, since
+   it works by asking `ControlApp` to restart NetDaemon, and `ControlApp`
+   isn't running until after this restart. Every restart after this first
+   one can go through the panel. (Home Assistant will also show a
+   persistent notification as a reminder whenever this applies — including
+   on an update that adds new files here, like the one to enable compiled
+   builds.)
 
 ## Configuration
 

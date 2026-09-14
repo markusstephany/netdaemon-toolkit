@@ -47,8 +47,8 @@ _FIRST_RESTART_NOTIFICATION = {
     "en": {
         "title": "NetDaemon Toolkit: restart NetDaemon once",
         "message": (
-            "NetDaemon Toolkit just installed its reload/status/codegen apps "
-            "into `{directory}`. Restart NetDaemon yourself now (Docker, the "
+            "NetDaemon Toolkit just installed its reload/status/codegen/rebuild "
+            "apps into `{directory}`. Restart NetDaemon yourself now (Docker, the "
             "add-on, however you normally do it) — not from the panel, since "
             "its reload button depends on these apps already running. Every "
             "restart after this one can go through the panel."
@@ -57,8 +57,9 @@ _FIRST_RESTART_NOTIFICATION = {
     "de": {
         "title": "NetDaemon Toolkit: NetDaemon einmal neu starten",
         "message": (
-            "NetDaemon Toolkit hat gerade die Reload-/Status-/Codegen-Apps in "
-            "`{directory}` installiert. Starte NetDaemon jetzt selbst neu "
+            "NetDaemon Toolkit hat gerade die Reload-/Status-/Codegen-/"
+            "Rebuild-Apps in `{directory}` installiert. Starte NetDaemon "
+            "jetzt selbst neu "
             "(Docker, Add-on, wie auch immer du das sonst machst) — nicht "
             "über das Panel, denn dessen Reload-Button setzt voraus, dass "
             "diese Apps schon laufen. Jeder Neustart danach kann über das "
