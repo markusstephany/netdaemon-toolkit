@@ -881,7 +881,12 @@ class NetDaemonToolkitPanel extends HTMLElement {
       }
       for (const name of Object.keys(d.dirs)) decide(d.dirs[name]);
     };
-    decide(dir);
+    // The synthetic tree root itself is never a valid promotion target -- it has no folder row
+    // of its own (_renderNode only ever renders header rows for its *children*), so if it were
+    // ever considered a candidate (the whole tree happening to have exactly one match, e.g. after
+    // deleting every other generated-entities file but one), the button would be promoted
+    // somewhere nothing ever renders and just silently vanish. Start recursion one level in.
+    for (const name of Object.keys(dir.dirs)) decide(dir.dirs[name]);
 
     return { promotions, suppressed };
   }
