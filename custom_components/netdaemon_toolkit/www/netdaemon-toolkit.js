@@ -222,6 +222,29 @@ function fileSlug(filename) {
     .toLowerCase();
 }
 
+// The app ids a file can stand for, most specific first: its own slug (HeatingApp.cs ->
+// heating_app), and the slug without a trailing _app/_adapter, for layouts whose entry class is
+// XAdapter.cs or XApp.cs while the app id is just "x" (e.g. [NetDaemonApp(Id = "heating")]).
+function fileToggleSlugs(filename) {
+  const slug = fileSlug(filename);
+  const bare = slug.replace(/_(app|adapter)$/, "");
+  return bare && bare !== slug ? [slug, bare] : [slug];
+}
+
+// The input_boolean.netdaemon_* toggle a slug belongs to: an exact id first, then one that ends
+// in "_<slug>" (NetDaemon prefixes an app without an explicit Id with its namespace).
+function findToggle(ids, slugs) {
+  for (const slug of slugs) {
+    const exact = ids.find((id) => id === "input_boolean.netdaemon_" + slug);
+    if (exact) return exact;
+  }
+  for (const slug of slugs) {
+    const suffixed = ids.find((id) => id.endsWith("_" + slug));
+    if (suffixed) return suffixed;
+  }
+  return null;
+}
+
 // CodeMirror overlay that highlights every (case-insensitive) occurrence.
 function searchOverlay(query) {
   return {
@@ -841,12 +864,20 @@ class NetDaemonToolkitPanel extends HTMLElement {
     // the toggle/regenerate button belongs on the OUTERMOST folder *within apps/* whose subtree
     // still contains exactly one match, so the whole domain folder acts as the one place to
     // control it, not whichever subfolder the file happens to sit in.
+    // Same idea for the on/off toggles: a top-level apps/<Domain>/ folder whose snake-case name
+    // is an app id ("Heating" -> input_boolean.netdaemon_heating) gets the toggle directly,
+    // whatever its files are called; everything else falls back to matching file names.
+    const { promotions: domainTogglePromotions, covered: domainToggleCovered } =
+      this._domainToggleFolders(appsRoot);
+    const toggles = this._promoteSingleMatches(appsRoot, (f) => {
+      if (domainToggleCovered.has(f.path)) return null;
+      const id = findToggle(this._appToggleEntities || [], fileToggleSlugs(f.name));
+      return id ? { file: f, id } : null;
+    });
+    for (const [path, match] of domainTogglePromotions) toggles.promotions.set(path, match);
+    for (const path of domainToggleCovered) toggles.suppressed.add(path);
     this._promoted = {
-      toggle: this._promoteSingleMatches(appsRoot, (f) => {
-        const slug = fileSlug(f.name);
-        const id = (this._appToggleEntities || []).find((tid) => tid.endsWith("_" + slug));
-        return id ? { file: f, id } : null;
-      }),
+      toggle: toggles,
       trace: this._promoteSingleMatches(appsRoot, (f) => {
         if (domainTraceCovered.has(f.path)) return null; // already handled at the domain level
         const slug = fileSlug(f.name);
@@ -924,6 +955,35 @@ class NetDaemonToolkitPanel extends HTMLElement {
       if (!this._traceApps.has(key)) continue;
       const dir = root.dirs[name];
       promotions.set(dir.path, { slug: key, name });
+      collectFiles(dir, covered);
+    }
+    return { promotions, covered };
+  }
+
+  // Top-level apps/<Domain>/ folders whose name is an app id: "Heating" ->
+  // input_boolean.netdaemon_heating, "O2TvAutostart" -> netdaemon_o2tv_autostart (fileSlug's own
+  // casing rule), and "<name>_app" for a domain whose entry class is <Name>App without an explicit
+  // Id. Only an exact id counts here -- a suffix match on a bare folder name ("Scan") would be far
+  // too loose at this level.
+  _domainToggleFolders(root) {
+    const promotions = new Map(); // dir.path -> { id, file }
+    const covered = new Set();
+    const ids = this._appToggleEntities || [];
+    if (!ids.length) return { promotions, covered };
+
+    const collectFiles = (d, out) => {
+      for (const f of d.files) out.add(f.path);
+      for (const name of Object.keys(d.dirs)) collectFiles(d.dirs[name], out);
+    };
+
+    for (const name of Object.keys(root.dirs)) {
+      const slug = fileSlug(name);
+      const id = [slug, slug + "_app"]
+        .map((s) => "input_boolean.netdaemon_" + s)
+        .find((candidate) => ids.includes(candidate));
+      if (!id) continue;
+      const dir = root.dirs[name];
+      promotions.set(dir.path, { id, file: null });
       collectFiles(dir, covered);
     }
     return { promotions, covered };
@@ -1215,7 +1275,7 @@ class NetDaemonToolkitPanel extends HTMLElement {
       }
       const slug = fileSlug(file.name);
       if (!this._promoted.toggle.suppressed.has(file.path)) {
-        const toggleId = (this._appToggleEntities || []).find((id) => id.endsWith("_" + slug));
+        const toggleId = findToggle(this._appToggleEntities || [], fileToggleSlugs(file.name));
         if (toggleId) {
           const tg = document.createElement("span");
           tg.className = "app-toggle";

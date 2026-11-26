@@ -150,7 +150,14 @@ source-deploy mode exactly as before.
   `apps/X/Logic/Business/XAdapter.cs`), and decision traces are matched by
   each domain's own trace key (its folder name, kebab-cased) rather than by
   file name, since a solution's own class names don't have to match
-  whatever wrote the trace.
+  whatever wrote the trace. The enable toggle works the same way: a
+  top-level `apps/<Domain>/` folder whose snake-cased name is an app id
+  (`Heating` → `input_boolean.netdaemon_heating`, or `<name>_app`) gets
+  the toggle directly. Everything else is matched by file name, accepting
+  the file's own slug (`HeatingApp.cs` → `heating_app`), the slug without a
+  trailing `App`/`Adapter` (`ThermostatsAdapter.cs` → `thermostats`, for an
+  explicit `[NetDaemonApp(Id = "thermostats")]`), and NetDaemon's
+  namespace-prefixed default ids (`…_control_app`).
 
 **Known limitation:** once `apps/` becomes a real multi-project solution (as
 opposed to loose `.cs` files), the Source-deploy option stops being usable —
